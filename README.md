@@ -3,8 +3,9 @@
 A lightweight, two-tier app for exploring and analyzing stock data with an AI chat interface. The backend exposes an `API` that streams model-generated responses and can call tools for real-time market data. The frontend is a React app that provides a chat UI.
 
 - Frontend: React + TypeScript + Vite
-- Backend: FastAPI + LangChain + yfinance
+- Backend: FastAPI + LangChain + yfinance + Supabase
 - Data/tools: `yfinance` for prices, history, balance sheet, and news
+- Database: Supabase for persistent chat history
 
 > Note: The backend currently streams responses over Server-Sent Events (SSE) and uses an OpenAI-compatible API via LangChain’s `ChatOpenAI`.
 
@@ -16,6 +17,8 @@ A lightweight, two-tier app for exploring and analyzing stock data with an AI ch
 - 📊 Fetch balance sheet data
 - 📰 Retrieve recent news for a ticker
 - 🤖 Chat interface that calls tools as needed
+- 💾 Save and retrieve previous chat conversations
+- 🗑️ Delete chat history
 - 🔌 Dev proxy: Frontend `/api/*` requests are proxied to the backend
 
 ---
@@ -24,9 +27,10 @@ A lightweight, two-tier app for exploring and analyzing stock data with an AI ch
 
 - Backend
   - Language: `Python (>=3.11)`
-  - Frameworks/Libraries: `FastAPI`, `LangChain`, `langgraph`, `pydantic`, `python-dotenv`, `uvicorn`, `yfinance`
+  - Frameworks/Libraries: `FastAPI`, `LangChain`, `langgraph`, `pydantic`, `python-dotenv`, `uvicorn`, `yfinance`, `supabase`
+  - Database: Supabase (PostgreSQL)
   - Entry point: `backend/main.py` (starts Uvicorn on port `8888`)
-  - Package management: `pip` via top-level `requirements.txt` or `pyproject.toml` in `backend/` (also contains `uv.lock` for Astral’s `uv`)
+  - Package management: `pip` via top-level `requirements.txt` or `pyproject.toml` in `backend/` (also contains `uv.lock` for Astral's `uv`)
 - Frontend
   - Language: `TypeScript`
   - Frameworks/Tools: `React`, `Vite`, `@thesysai/genui-sdk`, `@crayonai/react-ui`
@@ -40,6 +44,7 @@ A lightweight, two-tier app for exploring and analyzing stock data with an AI ch
 - Python `3.11+`
 - Node.js `18+` (recommended for Vite 7)
 - An OpenAI-compatible API key in `OPENAI_API_KEY`
+- Supabase account with database credentials
 
 > Security note: Never commit real secrets. If sensitive values were committed previously, rotate them immediately and remove them from history.
 
@@ -76,18 +81,12 @@ npm run dev
 
 ### Environment Variables
 
-Create a file `backend/.env` with at least:
+Create a file `backend/.env` with:
 
 ```
 OPENAI_API_KEY=your_api_key_here
-```
-
-Optional (present in repo but currently unused by the provided backend code — keep only if you plan to integrate them):
-
-```
-MONGO_URI=...
-JWT_SECRET=...
-JWT_ALGORITHM=HS256
+SUPABASE_URL=your_supabase_url_here
+SUPABASE_ANON_KEY=your_supabase_anon_key_here
 ```
 
 > TODO: Confirm which provider the model is using (the code sets a custom `base_url` in `ChatOpenAI`). Document any provider-specific headers or additional environment variables if needed.
@@ -101,18 +100,24 @@ JWT_ALGORITHM=HS256
   - `get_historical_stock_price(ticker, start_date, end_date)`
   - `get_balance_sheet(ticker)`
   - `get_stock_news(ticker)`
-- Endpoint: `POST /api/chat`
-  - Request body shape:
-
-```
-{
-  "prompt": { "content": "AAPL price?", "id": "<client-id>", "role": "user" },
-  "threadId": "<thread-id>",
-  "responseId": "<response-id>"
-}
-```
-
-  - Response: `text/event-stream` (SSE), streaming token content as it’s generated
+- API Endpoints:
+  - `POST /api/chat` - Send a message and receive streaming response
+    - Automatically saves messages to database
+    - Request body shape:
+    ```
+    {
+      "prompt": { "content": "AAPL price?", "id": "<client-id>", "role": "user" },
+      "threadId": "<thread-id>",
+      "responseId": "<response-id>"
+    }
+    ```
+    - Response: `text/event-stream` (SSE), streaming token content as it's generated
+  - `GET /api/chats` - Retrieve all saved chats
+  - `GET /api/chats/{chat_id}/messages` - Retrieve messages for a specific chat
+  - `DELETE /api/chats/{chat_id}` - Delete a chat and its messages
+- Database Schema:
+  - `chats` table: Stores chat threads with id, title, created_at, updated_at
+  - `messages` table: Stores individual messages with id, chat_id, role, content, created_at
 - FastAPI interactive docs: http://localhost:8888/docs
 
 ---

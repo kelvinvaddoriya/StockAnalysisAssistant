@@ -6,3 +6,4 @@ fastapi~=0.124.4
 langchain~=1.2.0
 langchain-openai~=1.1.4
 langgraph~=1.0.5
+supabase~=2.10.0
