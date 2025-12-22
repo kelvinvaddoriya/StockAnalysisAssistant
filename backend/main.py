@@ -81,7 +81,10 @@ async def chat(request: RequestObject):
     def generate():
         for token, _ in agent.stream(
             {'messages': [
-                SystemMessage('You are a stock analysis assistant. You have the ability to get real-time stock prices, historical stock prices (given a date range), news and balance sheet data for a given ticker symbol.'),
+                SystemMessage('You are a stock analysis assistant. '
+                              'You have the ability to get real-time stock prices, '
+                              'historical stock prices (given a date range), news and balance sheet data '
+                              'for a given ticker symbol.'),
                 HumanMessage(request.prompt.content)
             ]},
             stream_mode='messages',
