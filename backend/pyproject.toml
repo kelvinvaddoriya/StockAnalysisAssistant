@@ -11,5 +11,7 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "uvicorn>=0.38.0",
     "yfinance>=0.2.66",
-    "supabase>=2.10.0",
+    "motor>=3.7.0",
+    "bcrypt>=4.3.0",
+    "PyJWT>=2.10.0",
 ]
