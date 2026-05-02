@@ -7,11 +7,9 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.124.4",
     "langchain[openai]>=1.2.0",
+    "langgraph>=1.0.5",
     "pydantic>=2.12.5",
     "python-dotenv>=1.2.1",
     "uvicorn>=0.38.0",
     "yfinance>=0.2.66",
-    "motor>=3.7.0",
-    "bcrypt>=4.3.0",
-    "PyJWT>=2.10.0",
 ]
