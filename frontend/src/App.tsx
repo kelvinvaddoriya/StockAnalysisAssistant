@@ -4,21 +4,24 @@ import '@crayonai/react-ui/styles/index.css'
 import './App.css'
 import LoginPage from './LoginPage'
 import ChatPage from './ChatPage'
-
-interface User {
-  email: string
-  id: string
-}
+import { supabase } from './supabase'
+import type { User } from '@supabase/supabase-js'
 
 function App() {
   const [user, setUser] = useState<User | null>(null)
   const [checking, setChecking] = useState(true)
 
   useEffect(() => {
-    fetch('/api/auth/me')
-      .then(r => (r.ok ? r.json() : null))
-      .then(data => { setUser(data); setChecking(false) })
-      .catch(() => setChecking(false))
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null)
+      setChecking(false)
+    })
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+    })
+
+    return () => subscription.unsubscribe()
   }, [])
 
   if (checking) {
@@ -32,9 +35,12 @@ function App() {
   return (
     <ThemeProvider mode='dark'>
       {user ? (
-        <ChatPage user={user} onLogout={() => setUser(null)} />
+        <ChatPage
+          user={{ email: user.email ?? '', id: user.id }}
+          onLogout={() => supabase.auth.signOut()}
+        />
       ) : (
-        <LoginPage onLogin={setUser} />
+        <LoginPage />
       )}
     </ThemeProvider>
   )

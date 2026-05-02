@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { C1Chat } from '@thesysai/genui-sdk'
+import { supabase } from './supabase'
 
 interface User {
   email: string
@@ -65,7 +66,7 @@ export default function ChatPage({ user, onLogout }: Props) {
   }
 
   async function handleLogout() {
-    await fetch('/api/auth/logout', { method: 'POST' })
+    await supabase.auth.signOut()
     onLogout()
   }
 

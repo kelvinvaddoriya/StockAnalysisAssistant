@@ -1,10 +1,7 @@
 import { useState } from 'react'
+import { supabase } from './supabase'
 
-interface Props {
-  onLogin: (user: { email: string; id: string }) => void
-}
-
-export default function LoginPage({ onLogin }: Props) {
+export default function LoginPage() {
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -16,19 +13,15 @@ export default function LoginPage({ onLogin }: Props) {
     setError('')
     setLoading(true)
     try {
-      const res = await fetch(`/api/auth/${mode}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setError(data.detail || 'Something went wrong')
+      if (mode === 'register') {
+        const { error } = await supabase.auth.signUp({ email, password })
+        if (error) setError(error.message)
       } else {
-        onLogin({ email: data.email, id: data.id ?? '' })
+        const { error } = await supabase.auth.signInWithPassword({ email, password })
+        if (error) setError(error.message)
       }
     } catch {
-      setError('Network error — is the server running?')
+      setError('Something went wrong')
     } finally {
       setLoading(false)
     }
