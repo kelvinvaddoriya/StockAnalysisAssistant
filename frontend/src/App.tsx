@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, lazy, Suspense } from 'react'
 import { ThemeProvider } from '@thesysai/genui-sdk'
 import '@crayonai/react-ui/styles/index.css'
 import './App.css'
 import LoginPage from './LoginPage'
-import ChatPage from './ChatPage'
 import { supabase } from './supabase'
 import type { User } from '@supabase/supabase-js'
+
+const ChatPage = lazy(() => import('./ChatPage'))
 
 function App() {
   const [user, setUser] = useState<User | null>(null)
@@ -27,7 +28,18 @@ function App() {
   if (checking) {
     return (
       <ThemeProvider mode='dark'>
-        <div className='loading-screen'>Loading…</div>
+        <div className='loading-screen'>
+          <div className='loading-brand'>
+            <svg viewBox="0 0 32 32" width="28" height="28">
+              <circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" strokeWidth="1" />
+              <path d="M9 22 L 9 10 L 16 18 L 23 10 L 23 22" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <div>
+              <div className='loading-brand-word'>Bourse</div>
+              <div className='loading-sub'>Preparing your briefing…</div>
+            </div>
+          </div>
+        </div>
       </ThemeProvider>
     )
   }
@@ -35,10 +47,25 @@ function App() {
   return (
     <ThemeProvider mode='dark'>
       {user ? (
-        <ChatPage
-          user={{ email: user.email ?? '', id: user.id }}
-          onLogout={() => supabase.auth.signOut()}
-        />
+        <Suspense fallback={
+          <div className='loading-screen'>
+            <div className='loading-brand'>
+              <svg viewBox="0 0 32 32" width="28" height="28">
+                <circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" strokeWidth="1" />
+                <path d="M9 22 L 9 10 L 16 18 L 23 10 L 23 22" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <div>
+                <div className='loading-brand-word'>Bourse</div>
+                <div className='loading-sub'>Loading…</div>
+              </div>
+            </div>
+          </div>
+        }>
+          <ChatPage
+            user={{ email: user.email ?? '', id: user.id }}
+            onLogout={() => supabase.auth.signOut()}
+          />
+        </Suspense>
       ) : (
         <LoginPage />
       )}

@@ -23,6 +23,39 @@ interface Props {
   onLogout: () => void
 }
 
+function formatDate(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'Just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  if (days < 7) return `${days}d ago`
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function getInitials(email: string) {
+  const name = email.split('@')[0]
+  const parts = name.split(/[._-]/)
+  return parts.slice(0, 2).map(p => p[0]?.toUpperCase() ?? '').join('') || email[0]?.toUpperCase() || '?'
+}
+
+function MarketStatus() {
+  const now = new Date()
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }))
+  const day = et.getDay()
+  const mins = et.getHours() * 60 + et.getMinutes()
+  const isOpen = day >= 1 && day <= 5 && mins >= 570 && mins < 960
+
+  return (
+    <div className="market-status">
+      <span className={`ms-dot${isOpen ? ' open' : ''}`} />
+      <span>{isOpen ? 'Markets open' : 'Markets closed'}</span>
+    </div>
+  )
+}
+
 export default function ChatPage({ user, onLogout }: Props) {
   const [threads, setThreads] = useState<Thread[]>([])
   const [selectedThread, setSelectedThread] = useState<Thread | null>(null)
@@ -30,6 +63,7 @@ export default function ChatPage({ user, onLogout }: Props) {
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [fetchError, setFetchError] = useState('')
   const [chatKey, setChatKey] = useState(0)
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 1280)
 
   const fetchThreads = useCallback(async () => {
     const res = await fetch('/api/chats')
@@ -54,7 +88,7 @@ export default function ChatPage({ user, onLogout }: Props) {
         const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }))
         setFetchError(err.detail ?? `HTTP ${res.status}`)
       }
-    } catch (e) {
+    } catch {
       setFetchError('Network error loading messages')
     }
     setLoadingMessages(false)
@@ -63,11 +97,7 @@ export default function ChatPage({ user, onLogout }: Props) {
   function closeThread() {
     setSelectedThread(null)
     setThreadMessages([])
-  }
-
-  async function handleLogout() {
-    await supabase.auth.signOut()
-    onLogout()
+    setFetchError('')
   }
 
   function newChat() {
@@ -76,71 +106,131 @@ export default function ChatPage({ user, onLogout }: Props) {
     setTimeout(fetchThreads, 1000)
   }
 
+  async function handleLogout() {
+    await supabase.auth.signOut()
+    onLogout()
+  }
+
+  const initials = getInitials(user.email)
+  const threadTitle = selectedThread?.title ?? 'New enquiry'
+
   return (
-    <div className='chat-layout'>
-      <aside className='sidebar'>
-        <div className='sidebar-header'>
-          <span className='sidebar-logo'>StockAI</span>
+    <div className={`app${sidebarOpen ? '' : ' sidebar-collapsed'}`}>
+
+      {/* SIDEBAR */}
+      <aside className={`sidebar${sidebarOpen ? ' open' : ' closed'}`}>
+        <div className="brand">
+          <div className="brand-mark">
+            <svg viewBox="0 0 32 32" width="22" height="22">
+              <circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" strokeWidth="1" />
+              <path
+                d="M9 22 L 9 10 L 16 18 L 23 10 L 23 22"
+                fill="none" stroke="currentColor" strokeWidth="1.4"
+                strokeLinecap="round" strokeLinejoin="round"
+              />
+            </svg>
+          </div>
+          <div className="brand-name">
+            <div className="brand-word">Bourse</div>
+            <div className="brand-tag">est.2025</div>
+          </div>
         </div>
 
-        <button className='new-chat-btn' onClick={newChat}>
-          + New Chat
+        <button className="new-chat" onClick={newChat}>
+          <span className="plus">+</span> New enquiry
         </button>
 
-        <div className='thread-list'>
-          {threads.map(t => (
-            <button
-              key={t.thread_id}
-              className={`thread-item ${selectedThread?.thread_id === t.thread_id ? 'active' : ''}`}
-              onClick={() => openThread(t)}
-            >
-              <span className='thread-title'>{t.title}</span>
-              <span className='thread-date'>{formatDate(t.updated_at)}</span>
-            </button>
-          ))}
-          {threads.length === 0 && (
-            <p className='no-threads'>No past chats yet</p>
-          )}
+        <div className="side-section">
+          <div className="side-label">Recent enquiries</div>
+          <ul className="hist">
+            {threads.length === 0 && (
+              <li className="hist-empty">No past enquiries yet</li>
+            )}
+            {threads.map(t => (
+              <li
+                key={t.thread_id}
+                className={`hist-item${selectedThread?.thread_id === t.thread_id ? ' active' : ''}`}
+                onClick={() => openThread(t)}
+              >
+                <span className="hist-title">{t.title}</span>
+                <span className="hist-time">{formatDate(t.updated_at)}</span>
+              </li>
+            ))}
+          </ul>
         </div>
 
-        <div className='sidebar-footer'>
-          <span className='user-email' title={user.email}>{user.email}</span>
-          <button className='logout-btn' onClick={handleLogout}>Logout</button>
+        <div className="side-foot">
+          <MarketStatus />
+          <div className="user-row">
+            <div className="avatar">{initials}</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="user-name">{user.email}</div>
+              <div className="user-plan">Equity research · Pro</div>
+            </div>
+            <button className="logout-small" onClick={handleLogout} title="Sign out">↩</button>
+          </div>
         </div>
       </aside>
 
-      <main className='chat-main'>
+      {/* MAIN */}
+      <main className="main">
+        <header className="topbar">
+          <button
+            className="icon-btn"
+            onClick={() => setSidebarOpen(s => !s)}
+            aria-label="Toggle sidebar"
+          >
+            <svg viewBox="0 0 20 20" width="18" height="18">
+              <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
+          </button>
+
+          <div className="thread-title">
+            <span className="thread-eyebrow">Enquiry</span>
+            <h1>{threadTitle}</h1>
+          </div>
+
+          <div className="top-actions">
+            {selectedThread && (
+              <button className="rbtn rbtn-ghost" onClick={closeThread}>
+                ← New enquiry
+              </button>
+            )}
+          </div>
+        </header>
+
         {selectedThread ? (
-          <div className='thread-view'>
-            <div className='thread-view-header'>
-              <span className='thread-view-title'>{selectedThread.title}</span>
-              <button className='close-btn' onClick={closeThread}>✕ Close</button>
-            </div>
-            <div className='messages-list'>
-              {loadingMessages && <p className='loading-msgs'>Loading…</p>}
-              {fetchError && <p className='loading-msgs' style={{color:'#ff6b6b'}}>{fetchError}</p>}
-              {threadMessages.map((msg, i) => (
-                <div key={i} className={`message message-${msg.role}`}>
-                  <div className='message-bubble'>{msg.content}</div>
+          <div className="conversation">
+            {loadingMessages && (
+              <p className="msg-loading">Loading briefing…</p>
+            )}
+            {fetchError && (
+              <p className="msg-error">{fetchError}</p>
+            )}
+            {threadMessages.map((msg, i) =>
+              msg.role === 'user' ? (
+                <div key={i} className="msg msg-user">
+                  <div className="msg-byline">You</div>
+                  <div className="msg-body">{msg.content}</div>
                 </div>
-              ))}
-            </div>
+              ) : (
+                <div key={i} className="msg msg-assistant">
+                  <div className="msg-byline">
+                    <span className="assistant-mark" /> Bourse
+                  </div>
+                  <div className="msg-body">
+                    <p className="lede">{msg.content}</p>
+                  </div>
+                </div>
+              )
+            )}
           </div>
         ) : (
-          <C1Chat key={chatKey} apiUrl='/api/chat' />
+          <div className="c1chat-wrap">
+            <C1Chat key={chatKey} apiUrl="/api/chat" />
+          </div>
         )}
       </main>
     </div>
   )
-}
-
-
-function formatDate(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'Just now'
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  return `${Math.floor(hrs / 24)}d ago`
 }
