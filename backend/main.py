@@ -1,5 +1,7 @@
 import re
 import os
+import html
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -7,12 +9,12 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from langchain_core.tools import tool
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.prebuilt import create_react_agent
@@ -112,6 +114,72 @@ class RequestObject(BaseModel):
 _COMMON = {'A', 'I', 'AT', 'BY', 'IN', 'ON', 'OF', 'TO', 'AN', 'IT', 'OR', 'DO', 'US', 'MY', 'ME', 'IS'}
 
 
+def extract_text(content) -> str:
+    """Normalise a single token.content for streaming — returns the raw string chunk."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return ''.join(
+            b if isinstance(b, str) else (b.get('text') or b.get('content') or '')
+            for b in content
+        )
+    return str(content) if content else ''
+
+
+# Keys whose values in a thesys component props are human-readable text
+_TEXT_PROPS = {'title', 'subtitle', 'label', 'value', 'text', 'content',
+               'description', 'caption', 'heading', 'body', 'summary', 'price',
+               'change', 'currency', 'ticker', 'name', 'detail'}
+
+
+def _walk(node, out: list[str]):
+    """Recursively collect readable strings from a thesys component tree."""
+    if isinstance(node, str):
+        v = node.strip()
+        if v:
+            out.append(v)
+    elif isinstance(node, (int, float)):
+        out.append(str(node))
+    elif isinstance(node, list):
+        for item in node:
+            _walk(item, out)
+    elif isinstance(node, dict):
+        props = node.get('props') or {}
+        for key, val in props.items():
+            if key in _TEXT_PROPS and isinstance(val, str) and val.strip():
+                out.append(val.strip())
+            elif isinstance(val, (dict, list)):
+                _walk(val, out)
+
+
+def thesys_to_text(raw: str) -> str:
+    """
+    The thesys model streams HTML-entity-encoded JSON component trees.
+    Decode the entities, parse JSON, walk the tree, return readable text.
+    Falls back to plain HTML-unescaped string if JSON parse fails.
+    """
+    if not raw:
+        return ''
+    decoded = html.unescape(raw)
+    try:
+        data = json.loads(decoded)
+        parts: list[str] = []
+        _walk(data, parts)
+        # deduplicate while preserving order
+        seen: set[str] = set()
+        unique = [p for p in parts if not (p in seen or seen.add(p))]  # type: ignore[func-returns-value]
+        return '\n'.join(unique) if unique else decoded
+    except (json.JSONDecodeError, Exception):
+        return decoded.strip()
+
+_XML_WRAPPER = re.compile(r'<content[^>]*>(.*?)</content>', re.DOTALL | re.IGNORECASE)
+
+def strip_thesys_xml(text: str) -> str:
+    """C1Chat wraps messages as <content thesys="true">…</content> — extract the inner text."""
+    m = _XML_WRAPPER.search(text)
+    return m.group(1).strip() if m else text.strip()
+
+
 def extract_title(text: str) -> str:
     # $NVDA or $AAPL style
     tickers = re.findall(r'\$([A-Z]{1,5})\b', text)
@@ -152,6 +220,33 @@ async def health():
     return status
 
 
+@app.get('/api/debug-tokens')
+async def debug_tokens(q: str = 'What is the price of AAPL?'):
+    """Runs one agent turn and returns every token's type + content — use to diagnose streaming."""
+    config = {'configurable': {'thread_id': 'debug-diag'}}
+    rows = []
+    for token, _ in agent.stream(
+        {'messages': [SystemMessage('You are a stock analysis assistant.'), HumanMessage(q)]},
+        stream_mode='messages',
+        config=config
+    ):
+        text = extract_text(token.content)
+        rows.append({
+            'cls':      type(token).__name__,
+            'is_ai':    isinstance(token, AIMessage),
+            'is_tool':  isinstance(token, ToolMessage),
+            'content_type': type(token.content).__name__,
+            'text_preview': text[:120] if text else None,
+        })
+    raw_ai = ''.join(r['text_preview'] or '' for r in rows if r['is_ai'])
+    return {
+        'total_tokens': len(rows),
+        'tokens': rows,
+        'raw_ai_preview': raw_ai[:300],
+        'parsed_readable': thesys_to_text(raw_ai)[:600],
+    }
+
+
 @app.get('/api/chats')
 async def list_chats():
     if not db:
@@ -172,6 +267,21 @@ async def list_chats():
         return []
 
 
+@app.delete('/api/chats/{thread_id}')
+async def delete_chat(thread_id: str):
+    if not db:
+        return {'ok': False, 'error': 'no db'}
+    try:
+        # messages cascade-delete via FK, but be explicit
+        db.table('messages').delete().eq('chat_id', thread_id).execute()
+        db.table('chats').delete().eq('id', thread_id).execute()
+        log.info('Deleted thread %s', thread_id)
+        return {'ok': True}
+    except Exception as e:
+        log.error('Delete thread failed: %s', e)
+        return {'ok': False, 'error': str(e)}
+
+
 @app.get('/api/chats/{thread_id}')
 async def get_chat(thread_id: str):
     if not db:
@@ -189,36 +299,51 @@ async def get_chat(thread_id: str):
         return []
 
 
-@app.post('/api/chat')
-async def chat(request: RequestObject):
-    thread_id = request.threadId
-    user_content = request.prompt.content
-    now = lambda: datetime.now(timezone.utc).isoformat()
-
-    # --- persist chat + user message (best-effort, never blocks stream) ---
-    if db:
-        try:
-            # Upsert chat row; on conflict keep the existing title, only bump updated_at
-            db.table('chats').upsert(
-                {'id': thread_id, 'title': extract_title(user_content), 'updated_at': now()},
-                on_conflict='id',
-                ignore_duplicates=True,
-            ).execute()
-            # Always bump updated_at for returning chats
-            db.table('chats').update({'updated_at': now()}).eq('id', thread_id).execute()
-        except Exception as e:
-            log.error('DB upsert chat failed: %s', e)
-        try:
+def _save_to_db(thread_id: str, user_content: str, assistant_content: str):
+    """Runs in background after streaming completes."""
+    if not db:
+        return
+    ts = datetime.now(timezone.utc).isoformat()
+    # Decode any HTML entities the model may have streamed (e.g. &quot; → ")
+    # but preserve the full thesys component JSON so C1ChatViewer can render it.
+    clean = html.unescape(assistant_content).strip() if assistant_content else ''
+    log.info('Saving thread %s — user: %r… assistant: %d chars',
+             thread_id, user_content[:40], len(clean))
+    try:
+        db.table('chats').upsert(
+            {'id': thread_id, 'title': extract_title(user_content), 'updated_at': ts},
+            on_conflict='id',
+            ignore_duplicates=True,
+        ).execute()
+        db.table('chats').update({'updated_at': ts}).eq('id', thread_id).execute()
+    except Exception as e:
+        log.error('DB save chat failed: %s', e)
+    try:
+        db.table('messages').insert(
+            {'chat_id': thread_id, 'role': 'user', 'content': user_content}
+        ).execute()
+    except Exception as e:
+        log.error('DB save user msg failed: %s', e)
+    try:
+        if clean:
             db.table('messages').insert(
-                {'chat_id': thread_id, 'role': 'user', 'content': user_content}
+                {'chat_id': thread_id, 'role': 'assistant', 'content': clean}
             ).execute()
-        except Exception as e:
-            log.error('DB insert user message failed: %s', e)
+            log.info('Thread %s saved OK', thread_id)
+    except Exception as e:
+        log.error('DB save assistant msg failed: %s', e)
+
+
+@app.post('/api/chat')
+async def chat(request: RequestObject, background_tasks: BackgroundTasks):
+    thread_id = request.threadId
+    user_content = strip_thesys_xml(request.prompt.content)
+    log.info('Chat request — thread=%s  user=%r…', thread_id, user_content[:60])
 
     config = {'configurable': {'thread_id': thread_id}}
+    chunks: list[str] = []
 
     def generate():
-        collected: list[str] = []
         for token, _ in agent.stream(
             {'messages': [
                 SystemMessage('You are a stock analysis assistant. '
@@ -230,20 +355,20 @@ async def chat(request: RequestObject):
             stream_mode='messages',
             config=config
         ):
-            if token.content:
-                collected.append(token.content)
-                yield token.content
+            if isinstance(token, ToolMessage):
+                continue  # never yield raw tool JSON
+            text = extract_text(token.content)
+            if text:
+                chunks.append(text)
+                yield text
 
-        # Stream finished — persist assistant response
-        if db and collected:
-            full = ''.join(collected)
-            try:
-                db.table('messages').insert(
-                    {'chat_id': thread_id, 'role': 'assistant', 'content': full}
-                ).execute()
-                log.info('Saved conversation for thread %s', thread_id)
-            except Exception as e:
-                log.error('DB insert assistant message failed: %s', e)
+    # Closure captures `chunks` list by reference.
+    # BackgroundTasks runs AFTER StreamingResponse is fully sent,
+    # so `chunks` is complete by then.
+    def save():
+        _save_to_db(thread_id, user_content, ''.join(chunks))
+
+    background_tasks.add_task(save)
 
     return StreamingResponse(
         generate(),
