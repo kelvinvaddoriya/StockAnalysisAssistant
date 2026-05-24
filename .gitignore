@@ -39,6 +39,3 @@ frontend/build/
 # OS
 .DS_Store
 Thumbs.db
-
-#internal docs
-.docs/ARCHITECTURE.md
