@@ -2,6 +2,8 @@
 
 A full-stack AI chatbot for exploring stock data. Ask questions in plain English — the agent picks the right tool, fetches live market data, and streams back an answer.
 
+> **Looking for how it actually works?** See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — request pipeline, auth, data model, AWS topology, CI/CD.
+
 ---
 
 ## How it works
@@ -57,7 +59,6 @@ StockAnalysisAssistant/
 │   └── package.json
 ├── supabase/
 │   └── migrations/      # Postgres schema (chats + messages tables)
-├── requirements.txt      # Python deps (pip)
 └── .github/
     └── workflows/
         └── python-app.yml
@@ -81,7 +82,7 @@ python -m venv .venv
 .venv\Scripts\activate        # Windows
 # source .venv/bin/activate   # macOS/Linux
 
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 ```
 
 Create `backend/.env`:

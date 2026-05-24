@@ -1,7 +1,6 @@
 """Tests for pure utility functions in main.py (no LLM/DB required)."""
-import pytest
 # conftest.py stubs heavy deps before this import
-from main import extract_text, thesys_to_text, strip_thesys_xml, extract_title
+from main import extract_text, strip_thesys_xml, extract_title
 
 
 # ── extract_text ──────────────────────────────────────────────────────────────
@@ -31,60 +30,6 @@ class TestExtractText:
     def test_integer_converted(self):
         result = extract_text(42)
         assert result == "42"
-
-
-# ── thesys_to_text ────────────────────────────────────────────────────────────
-
-class TestThesysToText:
-    def test_empty_returns_empty(self):
-        assert thesys_to_text("") == ""
-
-    def test_plain_text_passthrough(self):
-        assert thesys_to_text("hello world") == "hello world"
-
-    def test_html_entity_decoding(self):
-        # &quot;hello&quot; → "hello" (valid JSON string) → _walk extracts: hello
-        result = thesys_to_text("&quot;hello&quot;")
-        assert result == "hello"
-
-    def test_valid_json_with_title_prop(self):
-        import json
-        payload = json.dumps({
-            "type": "Card",
-            "props": {"title": "Apple Inc.", "subtitle": "AAPL"}
-        })
-        result = thesys_to_text(payload)
-        assert "Apple Inc." in result
-        assert "AAPL" in result
-
-    def test_nested_component_tree(self):
-        import json
-        payload = json.dumps({
-            "type": "Root",
-            "props": {
-                "children": [
-                    {"type": "Text", "props": {"content": "Price"}},
-                    {"type": "Value", "props": {"value": "182.50"}},
-                ]
-            }
-        })
-        result = thesys_to_text(payload)
-        assert "Price" in result
-        assert "182.50" in result
-
-    def test_invalid_json_falls_back(self):
-        raw = "&lt;not json&gt;"
-        result = thesys_to_text(raw)
-        assert "<not json>" in result
-
-    def test_deduplicates_repeated_props(self):
-        import json
-        payload = json.dumps({
-            "type": "Card",
-            "props": {"title": "AAPL", "label": "AAPL"}
-        })
-        result = thesys_to_text(payload)
-        assert result.count("AAPL") == 1
 
 
 # ── strip_thesys_xml ──────────────────────────────────────────────────────────

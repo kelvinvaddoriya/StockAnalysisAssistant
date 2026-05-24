@@ -1,7 +1,6 @@
 import re
 import os
 import html
-import json
 import logging
 from datetime import datetime, timezone
 
@@ -151,52 +150,6 @@ def extract_text(content) -> str:
         )
     return str(content) if content else ''
 
-
-# Keys whose values in a thesys component props are human-readable text
-_TEXT_PROPS = {'title', 'subtitle', 'label', 'value', 'text', 'content',
-               'description', 'caption', 'heading', 'body', 'summary', 'price',
-               'change', 'currency', 'ticker', 'name', 'detail'}
-
-
-def _walk(node, out: list[str]):
-    """Recursively collect readable strings from a thesys component tree."""
-    if isinstance(node, str):
-        v = node.strip()
-        if v:
-            out.append(v)
-    elif isinstance(node, (int, float)):
-        out.append(str(node))
-    elif isinstance(node, list):
-        for item in node:
-            _walk(item, out)
-    elif isinstance(node, dict):
-        props = node.get('props') or {}
-        for key, val in props.items():
-            if key in _TEXT_PROPS and isinstance(val, str) and val.strip():
-                out.append(val.strip())
-            elif isinstance(val, (dict, list)):
-                _walk(val, out)
-
-
-def thesys_to_text(raw: str) -> str:
-    """
-    The thesys model streams HTML-entity-encoded JSON component trees.
-    Decode the entities, parse JSON, walk the tree, return readable text.
-    Falls back to plain HTML-unescaped string if JSON parse fails.
-    """
-    if not raw:
-        return ''
-    decoded = html.unescape(raw)
-    try:
-        data = json.loads(decoded)
-        parts: list[str] = []
-        _walk(data, parts)
-        # deduplicate while preserving order
-        seen: set[str] = set()
-        unique = [p for p in parts if not (p in seen or seen.add(p))]  # type: ignore[func-returns-value]
-        return '\n'.join(unique) if unique else decoded
-    except (json.JSONDecodeError, Exception):
-        return decoded.strip()
 
 _XML_WRAPPER = re.compile(r'<content[^>]*>(.*?)</content>', re.DOTALL | re.IGNORECASE)
 
