@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 
 # conftest.py stubs heavy deps before this import
-from main import app  # noqa: E402
+from main import app, require_user  # noqa: E402
 
 # Grab the fake message classes injected by conftest
 _lc_messages = sys.modules['langchain_core.messages']
@@ -13,10 +13,18 @@ AIMessage   = _lc_messages.AIMessage
 ToolMessage = _lc_messages.ToolMessage
 
 
+def _fake_user():
+    return {'id': '00000000-0000-0000-0000-000000000001', 'email': 'test@example.com'}
+
+
 @pytest.fixture
 def client():
-    with TestClient(app) as c:
-        yield c
+    app.dependency_overrides[require_user] = _fake_user
+    try:
+        with TestClient(app) as c:
+            yield c
+    finally:
+        app.dependency_overrides.clear()
 
 
 # ── /api/health ───────────────────────────────────────────────────────────────

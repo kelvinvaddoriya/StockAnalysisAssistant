@@ -1,8 +1,36 @@
 import { useState, useEffect, useCallback } from 'react'
 import { C1Chat, useThreadListManager, useThreadManager } from '@thesysai/genui-sdk'
-import { supabase } from './supabase'
+import { supabase, authedFetch } from './supabase'
 import SettingsPage from './SettingsPage'
 import { formatDate, profileInitials } from './utils'
+
+// processMessage replaces apiUrl for C1Chat / useThreadManager so we can attach
+// the Supabase access token. The backend's /api/chat expects only the LAST
+// user message; full history lives in the langgraph checkpointer keyed on
+// threadId.
+type ChatMessage = { id: string; role: string; content?: string }
+
+async function chatProcessMessage({
+  threadId, messages, responseId, abortController,
+}: {
+  threadId: string
+  messages: ChatMessage[]
+  responseId: string
+  abortController: AbortController
+}): Promise<Response> {
+  const lastUser = [...messages].reverse().find(m => m.role === 'user')
+  if (!lastUser) throw new Error('No user message to send')
+  return authedFetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prompt: { content: String(lastUser.content), id: lastUser.id, role: 'user' },
+      threadId,
+      responseId,
+    }),
+    signal: abortController.signal,
+  })
+}
 
 interface User {
   email: string
@@ -146,7 +174,7 @@ function ContinuationChat({ thread }: { thread: Thread }) {
   const threadManager = useThreadManager({
     threadListManager,
     loadThread: async (tid) => {
-      const res = await fetch(`/api/chats/${tid}`)
+      const res = await authedFetch(`/api/chats/${tid}`)
       if (!res.ok) { setLoading(false); return [] }
       const rows: { role: string; content: string }[] = await res.json()
       setLoading(false)
@@ -157,7 +185,7 @@ function ContinuationChat({ thread }: { thread: Thread }) {
       }))
     },
     onUpdateMessage: () => {},
-    apiUrl: '/api/chat',
+    processMessage: chatProcessMessage,
   })
 
   useEffect(() => {
@@ -247,7 +275,7 @@ export default function ChatPage({ user, onLogout }: Props) {
   }
 
   const fetchThreads = useCallback(async () => {
-    const res = await fetch('/api/chats')
+    const res = await authedFetch('/api/chats')
     if (res.ok) setThreads(await res.json())
   }, [])
 
@@ -257,9 +285,16 @@ export default function ChatPage({ user, onLogout }: Props) {
     return () => clearInterval(id)
   }, [fetchThreads])
 
+  function closeSidebarOnMobile() {
+    if (window.matchMedia('(max-width: 820px)').matches) {
+      setSidebarOpen(false)
+    }
+  }
+
   function openThread(thread: Thread) {
     setView('chat')
     setSelectedThread(thread)
+    closeSidebarOnMobile()
   }
 
   function closeThread() {
@@ -273,7 +308,7 @@ export default function ChatPage({ user, onLogout }: Props) {
 
   async function confirmDelete() {
     if (!pendingDelete) return
-    await fetch(`/api/chats/${pendingDelete.thread_id}`, { method: 'DELETE' })
+    await authedFetch(`/api/chats/${pendingDelete.thread_id}`, { method: 'DELETE' })
     setThreads(prev => prev.filter(t => t.thread_id !== pendingDelete.thread_id))
     if (selectedThread?.thread_id === pendingDelete.thread_id) closeThread()
     setPendingDelete(null)
@@ -284,6 +319,7 @@ export default function ChatPage({ user, onLogout }: Props) {
     closeThread()
     setChatKey(k => k + 1)
     setTimeout(fetchThreads, 1000)
+    closeSidebarOnMobile()
   }
 
   async function handleLogout() {
@@ -432,10 +468,14 @@ export default function ChatPage({ user, onLogout }: Props) {
           </div>
         ) : (
           <div className="c1chat-wrap">
-            <C1Chat key={chatKey} apiUrl="/api/chat" />
+            <C1Chat key={chatKey} processMessage={chatProcessMessage} />
           </div>
         )}
       </main>
+
+      {sidebarOpen && (
+        <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
+      )}
 
       {pendingDelete && (
         <DeleteModal

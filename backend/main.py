@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 
 import uvicorn
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, Depends, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -202,6 +202,28 @@ def extract_title(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+
+async def require_user(authorization: str | None = Header(default=None)) -> dict:
+    """Validate the Supabase access token on the Authorization header and
+    return the authenticated user. Raises 401 if missing/invalid."""
+    if not db:
+        raise HTTPException(status_code=503, detail='Auth backend unavailable')
+    if not authorization or not authorization.lower().startswith('bearer '):
+        raise HTTPException(status_code=401, detail='Missing bearer token')
+    token = authorization.split(' ', 1)[1].strip()
+    try:
+        result = db.auth.get_user(token)
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f'Invalid token: {e}')
+    user = getattr(result, 'user', None)
+    if not user or not user.id:
+        raise HTTPException(status_code=401, detail='Invalid token')
+    return {'id': user.id, 'email': user.email}
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -223,41 +245,15 @@ async def health():
     return status
 
 
-@app.get('/api/debug-tokens')
-async def debug_tokens(q: str = 'What is the price of AAPL?'):
-    """Runs one agent turn and returns every token's type + content — use to diagnose streaming."""
-    config = {'configurable': {'thread_id': 'debug-diag'}}
-    rows = []
-    for token, _ in agent.stream(
-        {'messages': [SystemMessage('You are a stock analysis assistant.'), HumanMessage(q)]},
-        stream_mode='messages',
-        config=config
-    ):
-        text = extract_text(token.content)
-        rows.append({
-            'cls':      type(token).__name__,
-            'is_ai':    isinstance(token, AIMessage),
-            'is_tool':  isinstance(token, ToolMessage),
-            'content_type': type(token.content).__name__,
-            'text_preview': text[:120] if text else None,
-        })
-    raw_ai = ''.join(r['text_preview'] or '' for r in rows if r['is_ai'])
-    return {
-        'total_tokens': len(rows),
-        'tokens': rows,
-        'raw_ai_preview': raw_ai[:300],
-        'parsed_readable': thesys_to_text(raw_ai)[:600],
-    }
-
-
 @app.get('/api/chats')
-async def list_chats():
+async def list_chats(user: dict = Depends(require_user)):
     if not db:
         return []
     try:
         result = (
             db.table('chats')
             .select('id, title, updated_at')
+            .eq('user_id', user['id'])
             .order('updated_at', desc=True)
             .limit(50)
             .execute()
@@ -270,15 +266,26 @@ async def list_chats():
         return []
 
 
+def _chat_owner(thread_id: str) -> str | None:
+    """Return the user_id of the chat, or None if it doesn't exist."""
+    try:
+        result = db.table('chats').select('user_id').eq('id', thread_id).limit(1).execute()
+        return result.data[0]['user_id'] if result.data else None
+    except Exception:
+        return None
+
+
 @app.delete('/api/chats/{thread_id}')
-async def delete_chat(thread_id: str):
+async def delete_chat(thread_id: str, user: dict = Depends(require_user)):
     if not db:
         return {'ok': False, 'error': 'no db'}
+    if _chat_owner(thread_id) != user['id']:
+        raise HTTPException(status_code=404, detail='Chat not found')
     try:
         # messages cascade-delete via FK, but be explicit
         db.table('messages').delete().eq('chat_id', thread_id).execute()
-        db.table('chats').delete().eq('id', thread_id).execute()
-        log.info('Deleted thread %s', thread_id)
+        db.table('chats').delete().eq('id', thread_id).eq('user_id', user['id']).execute()
+        log.info('Deleted thread %s for user %s', thread_id, user['id'])
         return {'ok': True}
     except Exception as e:
         log.error('Delete thread failed: %s', e)
@@ -286,9 +293,11 @@ async def delete_chat(thread_id: str):
 
 
 @app.get('/api/chats/{thread_id}')
-async def get_chat(thread_id: str):
+async def get_chat(thread_id: str, user: dict = Depends(require_user)):
     if not db:
         return []
+    if _chat_owner(thread_id) != user['id']:
+        raise HTTPException(status_code=404, detail='Chat not found')
     try:
         result = (
             db.table('messages')
@@ -302,7 +311,7 @@ async def get_chat(thread_id: str):
         return []
 
 
-def _save_to_db(thread_id: str, user_content: str, assistant_content: str):
+def _save_to_db(thread_id: str, user_id: str, user_content: str, assistant_content: str):
     """Runs in background after streaming completes."""
     if not db:
         return
@@ -310,17 +319,33 @@ def _save_to_db(thread_id: str, user_content: str, assistant_content: str):
     # Decode any HTML entities the model may have streamed (e.g. &quot; → ")
     # but preserve the full thesys component JSON so C1ChatViewer can render it.
     clean = html.unescape(assistant_content).strip() if assistant_content else ''
-    log.info('Saving thread %s — user: %r… assistant: %d chars',
-             thread_id, user_content[:40], len(clean))
-    try:
-        db.table('chats').upsert(
-            {'id': thread_id, 'title': extract_title(user_content), 'updated_at': ts},
-            on_conflict='id',
-            ignore_duplicates=True,
-        ).execute()
-        db.table('chats').update({'updated_at': ts}).eq('id', thread_id).execute()
-    except Exception as e:
-        log.error('DB save chat failed: %s', e)
+    log.info('Saving thread %s for user %s — user: %r… assistant: %d chars',
+             thread_id, user_id, user_content[:40], len(clean))
+
+    # Insert-or-update: keep existing owner; never let a request hijack
+    # someone else's thread_id by writing into it.
+    existing_owner = _chat_owner(thread_id)
+    if existing_owner is None:
+        try:
+            db.table('chats').insert({
+                'id': thread_id,
+                'title': extract_title(user_content),
+                'updated_at': ts,
+                'user_id': user_id,
+            }).execute()
+        except Exception as e:
+            log.error('DB create chat failed: %s', e)
+            return
+    elif existing_owner != user_id:
+        log.warning('Refusing to write to thread %s — owned by %s, request from %s',
+                    thread_id, existing_owner, user_id)
+        return
+    else:
+        try:
+            db.table('chats').update({'updated_at': ts}).eq('id', thread_id).eq('user_id', user_id).execute()
+        except Exception as e:
+            log.error('DB touch chat failed: %s', e)
+
     try:
         db.table('messages').insert(
             {'chat_id': thread_id, 'role': 'user', 'content': user_content}
@@ -338,10 +363,18 @@ def _save_to_db(thread_id: str, user_content: str, assistant_content: str):
 
 
 @app.post('/api/chat')
-async def chat(request: RequestObject, background_tasks: BackgroundTasks):
+async def chat(request: RequestObject, background_tasks: BackgroundTasks, user: dict = Depends(require_user)):
     thread_id = request.threadId
     user_content = strip_thesys_xml(request.prompt.content)
-    log.info('Chat request — thread=%s  user=%r…', thread_id, user_content[:60])
+
+    # Block before spending tokens if the thread exists and isn't theirs.
+    if db:
+        owner = _chat_owner(thread_id)
+        if owner is not None and owner != user['id']:
+            raise HTTPException(status_code=404, detail='Chat not found')
+
+    log.info('Chat request — user=%s thread=%s  prompt=%r…',
+             user['id'], thread_id, user_content[:60])
 
     config = {'configurable': {'thread_id': thread_id}}
     chunks: list[str] = []
@@ -369,7 +402,7 @@ async def chat(request: RequestObject, background_tasks: BackgroundTasks):
     # BackgroundTasks runs AFTER StreamingResponse is fully sent,
     # so `chunks` is complete by then.
     def save():
-        _save_to_db(thread_id, user_content, ''.join(chunks))
+        _save_to_db(thread_id, user['id'], user_content, ''.join(chunks))
 
     background_tasks.add_task(save)
 
