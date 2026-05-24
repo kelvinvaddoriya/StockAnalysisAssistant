@@ -6,16 +6,32 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)
+
+  function switchMode(next: 'login' | 'register') {
+    setMode(next)
+    setError('')
+    setSuccess('')
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
+    setSuccess('')
     setLoading(true)
     try {
       if (mode === 'register') {
-        const { error } = await supabase.auth.signUp({ email, password })
-        if (error) setError(error.message)
+        const { data, error } = await supabase.auth.signUp({ email, password })
+        if (error) {
+          setError(error.message)
+        } else if (data.user && !data.session) {
+          // Supabase project has email confirmation enabled — user must verify
+          // before they can sign in. Switch tab so the next action is clear.
+          setSuccess(`Account created. Check ${email} for a confirmation link, then sign in.`)
+          setPassword('')
+          setMode('login')
+        }
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password })
         if (error) setError(error.message)
@@ -53,13 +69,13 @@ export default function LoginPage() {
         <div className="auth-tabs">
           <button
             className={`auth-tab${mode === 'login' ? ' active' : ''}`}
-            onClick={() => { setMode('login'); setError('') }}
+            onClick={() => switchMode('login')}
           >
             Sign In
           </button>
           <button
             className={`auth-tab${mode === 'register' ? ' active' : ''}`}
-            onClick={() => { setMode('register'); setError('') }}
+            onClick={() => switchMode('register')}
           >
             Register
           </button>
@@ -83,6 +99,7 @@ export default function LoginPage() {
             className="auth-input"
             required
           />
+          {success && <p className="auth-success">{success}</p>}
           {error && <p className="auth-error">{error}</p>}
           <button type="submit" className="auth-btn" disabled={loading}>
             {loading ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Create Account'}
