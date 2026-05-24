@@ -19,6 +19,9 @@ env/
 .env.*
 *.local
 
+# Claude Code per-user state (settings.json may be committed if shared)
+.claude/settings.local.json
+
 # uv
 .python-version
 
