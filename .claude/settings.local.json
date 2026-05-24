@@ -3,7 +3,9 @@
     "allow": [
       "WebFetch(domain:api.anthropic.com)",
       "Bash(python *)",
-      "Bash(npm install *)"
+      "Bash(npm install *)",
+      "Bash(dir C:UsersSATPycharmProjectsStockAnalysisAssistant *)",
+      "PowerShell(Get-ChildItem backend -Force | Where-Object { $_.Name -ne '.venv' } | Select-Object Name, Mode)"
     ]
   }
 }

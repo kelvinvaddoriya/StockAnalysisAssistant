@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { C1Chat, useThreadListManager, useThreadManager } from '@thesysai/genui-sdk'
 import { supabase } from './supabase'
 import SettingsPage from './SettingsPage'
-import { formatDate, getInitials, profileInitials } from './utils'
+import { formatDate, profileInitials } from './utils'
 
 interface User {
   email: string
@@ -15,10 +15,6 @@ interface Thread {
   updated_at: string
 }
 
-interface Message {
-  role: 'user' | 'assistant'
-  content: string
-}
 
 interface Props {
   user: User
@@ -131,8 +127,16 @@ function ContinuationChat({ thread }: { thread: Thread }) {
   const [loading, setLoading] = useState(true)
 
   const threadListManager = useThreadListManager({
-    fetchThreadList: async () => [{ id: thread.thread_id, title: thread.title }],
-    createThread: async () => ({ id: crypto.randomUUID(), title: 'New Enquiry' }),
+    fetchThreadList: async () => [{
+      threadId: thread.thread_id,
+      title: thread.title,
+      createdAt: new Date(thread.updated_at),
+    }],
+    createThread: async () => ({
+      threadId: crypto.randomUUID(),
+      title: 'New Enquiry',
+      createdAt: new Date(),
+    }),
     deleteThread: async () => {},
     updateThread: async (t) => t,
     onSwitchToNew: () => {},
@@ -152,6 +156,7 @@ function ContinuationChat({ thread }: { thread: Thread }) {
         content: m.content,
       }))
     },
+    onUpdateMessage: () => {},
     apiUrl: '/api/chat',
   })
 
