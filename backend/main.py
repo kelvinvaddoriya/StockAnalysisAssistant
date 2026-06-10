@@ -1,14 +1,17 @@
 import re
 import os
 import html
+import time
 import logging
+from collections import defaultdict, deque
 from datetime import datetime, timezone
+from uuid import UUID
 
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 import uvicorn
-from fastapi import FastAPI, BackgroundTasks, Depends, Header, HTTPException
+from fastapi import FastAPI, BackgroundTasks, Depends, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -50,9 +53,18 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+
+@app.middleware('http')
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('X-Frame-Options', 'DENY')
+    response.headers.setdefault('Referrer-Policy', 'no-referrer')
+    return response
 
 # ---------------------------------------------------------------------------
 # LLM + agent
@@ -121,16 +133,29 @@ agent = create_react_agent(
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
+# Caps the prompt size so a single request can't dump megabytes into the LLM.
+MAX_PROMPT_CHARS = 8000
+
+
 class PromptObject(BaseModel):
-    content: str
-    id: str
-    role: str
+    content: str = Field(min_length=1, max_length=MAX_PROMPT_CHARS)
+    id: str = Field(max_length=128)
+    role: str = Field(max_length=32)
 
 
 class RequestObject(BaseModel):
     prompt: PromptObject
     threadId: str
-    responseId: str
+    responseId: str = Field(max_length=128)
+
+    @field_validator('threadId')
+    @classmethod
+    def _thread_id_must_be_uuid(cls, v: str) -> str:
+        try:
+            UUID(v)
+        except (ValueError, AttributeError, TypeError):
+            raise ValueError('threadId must be a UUID')
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -192,11 +217,41 @@ async def require_user(authorization: str | None = Header(default=None)) -> dict
     try:
         result = db.auth.get_user(token)
     except Exception as e:
-        raise HTTPException(status_code=401, detail=f'Invalid token: {e}')
+        log.warning('Token validation failed: %s', e)
+        raise HTTPException(status_code=401, detail='Invalid token')
     user = getattr(result, 'user', None)
     if not user or not user.id:
         raise HTTPException(status_code=401, detail='Invalid token')
     return {'id': user.id, 'email': user.email}
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting — in-memory sliding window per user. Good enough for the
+# single-instance EB deployment; swap for Redis if this ever scales out.
+# ---------------------------------------------------------------------------
+RATE_LIMIT_MAX = 20        # max /api/chat requests …
+RATE_LIMIT_WINDOW = 60.0   # … per this many seconds, per user
+
+_request_log: dict[str, deque] = defaultdict(deque)
+
+
+def _check_rate_limit(user_id: str) -> None:
+    now = time.monotonic()
+    q = _request_log[user_id]
+    while q and now - q[0] > RATE_LIMIT_WINDOW:
+        q.popleft()
+    if len(q) >= RATE_LIMIT_MAX:
+        raise HTTPException(status_code=429, detail='Too many requests, please slow down')
+    q.append(now)
+
+
+def _require_valid_thread_id(thread_id: str) -> None:
+    """Path-param counterpart of the RequestObject validator. 404 (not 422) so
+    probing with junk ids is indistinguishable from a missing chat."""
+    try:
+        UUID(thread_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail='Chat not found')
 
 
 # ---------------------------------------------------------------------------
@@ -212,12 +267,12 @@ async def health():
             status['db'] = True
             status['tables'].append('chats')
         except Exception as e:
-            status['chats_error'] = str(e)
+            log.error('Health check (chats) failed: %s', e)
         try:
             db.table('messages').select('id').limit(1).execute()
             status['tables'].append('messages')
         except Exception as e:
-            status['messages_error'] = str(e)
+            log.error('Health check (messages) failed: %s', e)
     return status
 
 
@@ -255,6 +310,7 @@ def _chat_owner(thread_id: str) -> str | None:
 async def delete_chat(thread_id: str, user: dict = Depends(require_user)):
     if not db:
         return {'ok': False, 'error': 'no db'}
+    _require_valid_thread_id(thread_id)
     if _chat_owner(thread_id) != user['id']:
         raise HTTPException(status_code=404, detail='Chat not found')
     try:
@@ -265,13 +321,14 @@ async def delete_chat(thread_id: str, user: dict = Depends(require_user)):
         return {'ok': True}
     except Exception as e:
         log.error('Delete thread failed: %s', e)
-        return {'ok': False, 'error': str(e)}
+        return {'ok': False, 'error': 'delete failed'}
 
 
 @app.get('/api/chats/{thread_id}')
 async def get_chat(thread_id: str, user: dict = Depends(require_user)):
     if not db:
         return []
+    _require_valid_thread_id(thread_id)
     if _chat_owner(thread_id) != user['id']:
         raise HTTPException(status_code=404, detail='Chat not found')
     try:
@@ -340,6 +397,7 @@ def _save_to_db(thread_id: str, user_id: str, user_content: str, assistant_conte
 
 @app.post('/api/chat')
 async def chat(request: RequestObject, background_tasks: BackgroundTasks, user: dict = Depends(require_user)):
+    _check_rate_limit(user['id'])
     thread_id = request.threadId
     user_content = strip_thesys_xml(request.prompt.content)
 

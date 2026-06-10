@@ -322,7 +322,9 @@ Edit a JSON of the current config: `aws cloudfront get-distribution-config --id 
 ## 10. Things to know that aren't obvious from reading the code
 
 - **Conversation memory is in-process.** `InMemorySaver` means an EB restart loses every active conversation's context. For an MVP this is fine; if you scale to multi-instance or care about durability, swap in a persistent checkpointer (`langgraph.checkpoint.postgres` / `langgraph.checkpoint.sqlite`).
-- **Health check (`/api/health`) is unauthenticated by design.** It only reports whether the DB connection works and which tables exist. No PII, no chat data.
+- **Health check (`/api/health`) is unauthenticated by design.** It only reports whether the DB connection works and which tables exist. No PII, no chat data, and DB errors are logged server-side rather than returned to the caller.
+- **`/api/chat` is rate-limited per user** (in-memory sliding window, `RATE_LIMIT_MAX` per `RATE_LIMIT_WINDOW` in `main.py`) and prompt content is capped at `MAX_PROMPT_CHARS`. Both exist to bound LLM spend per authenticated user. The limiter state is in-process — if the backend ever scales past one instance, move it to Redis or similar.
+- **`threadId` must be a UUID.** Validated in the request model for `/api/chat` and in the path for `/api/chats/{id}`; junk ids get a 404 so they're indistinguishable from missing chats.
 - **`/api/debug-tokens` was removed** for security — it ran the LLM on caller-supplied input with no auth, making it a cost-abuse vector. Restore with care.
 - **`frontend/deploy.ps1`** is a manual escape hatch. CI is the normal path; the script is for one-off pushes when you don't want to wait for CI.
 - **The Supabase project URL (`https://bfggkbsjnxyptrfotrjc.supabase.co`) is not a secret.** It's in the frontend bundle. The anon JWT is also public-by-design. The only Supabase secret is the `service_role` JWT.

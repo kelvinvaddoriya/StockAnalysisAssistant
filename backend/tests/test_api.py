@@ -19,6 +19,8 @@ def _fake_user():
 
 @pytest.fixture
 def client():
+    import main as m
+    m._request_log.clear()  # reset rate-limit state between tests
     app.dependency_overrides[require_user] = _fake_user
     try:
         with TestClient(app) as c:
@@ -56,7 +58,7 @@ class TestListChats:
 
 class TestGetChat:
     def test_returns_empty_list_without_db(self, client):
-        r = client.get('/api/chats/some-thread-id')
+        r = client.get('/api/chats/11111111-1111-1111-1111-111111111111')
         assert r.status_code == 200
         assert r.json() == []
 
@@ -65,7 +67,7 @@ class TestGetChat:
 
 CHAT_PAYLOAD = {
     'prompt': {'content': 'What is the price of AAPL?', 'id': 'msg-1', 'role': 'user'},
-    'threadId': 'test-thread-001',
+    'threadId': '22222222-2222-2222-2222-222222222222',
     'responseId': 'resp-1',
 }
 
@@ -125,6 +127,45 @@ class TestChat:
     def test_rejects_missing_fields(self, client):
         r = client.post('/api/chat', json={'threadId': 'x'})
         assert r.status_code == 422
+
+    def test_rejects_non_uuid_thread_id(self, client):
+        r = client.post('/api/chat', json={**CHAT_PAYLOAD, 'threadId': 'not-a-uuid'})
+        assert r.status_code == 422
+
+    def test_rejects_oversized_prompt(self, client):
+        import main as m
+        big = 'A' * (m.MAX_PROMPT_CHARS + 1)
+        r = client.post('/api/chat', json={
+            **CHAT_PAYLOAD,
+            'prompt': {**CHAT_PAYLOAD['prompt'], 'content': big},
+        })
+        assert r.status_code == 422
+
+    def test_rate_limit_returns_429(self, client, monkeypatch):
+        import main as m
+        monkeypatch.setattr(m, 'RATE_LIMIT_MAX', 2)
+        original = m.agent
+        m.agent = self._mock_agent_stream(['ok'])
+        try:
+            assert client.post('/api/chat', json=CHAT_PAYLOAD).status_code == 200
+            assert client.post('/api/chat', json=CHAT_PAYLOAD).status_code == 200
+            assert client.post('/api/chat', json=CHAT_PAYLOAD).status_code == 429
+        finally:
+            m.agent = original
+
+
+class TestThreadIdPathValidation:
+    def test_get_chat_rejects_non_uuid(self, client):
+        """Without a db the endpoint short-circuits, so exercise the validator directly."""
+        import main as m
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            m._require_valid_thread_id('../../etc/passwd')
+        assert exc.value.status_code == 404
+
+    def test_validator_accepts_uuid(self):
+        import main as m
+        m._require_valid_thread_id('11111111-1111-1111-1111-111111111111')
 
     def test_xml_wrapper_stripped_before_agent(self, client):
         """C1Chat wraps user content in <content> — the agent should receive plain text."""

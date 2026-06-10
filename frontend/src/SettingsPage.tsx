@@ -15,24 +15,40 @@ function getInitials(name: string, email: string) {
   return email[0]?.toUpperCase() ?? '?'
 }
 
+// Raster formats only — SVG can embed script, and anything else bloats
+// localStorage. Keep in sync with the "JPG, PNG, WebP" hint below.
+const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp']
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024
+
 export default function SettingsPage({ user, displayName: initialName, avatarUrl: initialAvatar, onSave }: Props) {
   const [name, setName] = useState(initialName)
   const [avatar, setAvatar] = useState(initialAvatar)
+  const [avatarError, setAvatarError] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
+    e.target.value = ''
     if (!file) return
+    if (!ALLOWED_AVATAR_TYPES.includes(file.type)) {
+      setAvatarError('Please choose a JPG, PNG or WebP image.')
+      return
+    }
+    if (file.size > MAX_AVATAR_BYTES) {
+      setAvatarError('Image is too large — 2 MB max.')
+      return
+    }
+    setAvatarError('')
     const reader = new FileReader()
     reader.onload = ev => setAvatar(ev.target?.result as string)
     reader.readAsDataURL(file)
-    e.target.value = ''
   }
 
   function removeAvatar() {
     setAvatar('')
+    setAvatarError('')
   }
 
   async function handleSave() {
@@ -78,6 +94,11 @@ export default function SettingsPage({ user, displayName: initialName, avatarUrl
             <div className="settings-avatar-meta">
               <div className="settings-avatar-name">{name || user.email}</div>
               <div className="settings-avatar-sub">Click to upload · JPG, PNG, WebP</div>
+              {avatarError && (
+                <div className="settings-avatar-sub" role="alert" style={{ color: 'var(--down, #e8333a)' }}>
+                  {avatarError}
+                </div>
+              )}
               {avatar && (
                 <button className="settings-avatar-remove" onClick={removeAvatar}>Remove photo</button>
               )}
