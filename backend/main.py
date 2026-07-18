@@ -44,8 +44,17 @@ else:
 # ---------------------------------------------------------------------------
 app = FastAPI()
 
-_extra_origins = [o.strip() for o in os.getenv('ALLOWED_ORIGINS', '').split(',') if o.strip()]
+def _clean_origin(raw: str) -> str:
+    # Dashboard paste artifacts: surrounding quotes and a trailing slash both
+    # produce a value that silently never matches, since CORS compares origins
+    # byte-for-byte. Normalise rather than fail closed with no explanation.
+    return raw.strip().strip('"').strip("'").rstrip('/')
+
+
+_extra_origins = [c for o in os.getenv('ALLOWED_ORIGINS', '').split(',') if (c := _clean_origin(o))]
 _origins = ["http://localhost:3000", "http://127.0.0.1:3000"] + _extra_origins
+# Logged so a CORS failure can be diagnosed from the deploy log alone.
+log.info('CORS allowlist: %s', _origins)
 
 app.add_middleware(
     CORSMiddleware,
