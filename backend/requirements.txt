@@ -4,6 +4,10 @@ pydantic>=2.12.5
 python-dotenv>=1.2.1
 langchain[openai]>=1.2.0
 langgraph>=1.0.5
+# Upper bound is load-bearing: 3.1.x requires langgraph-checkpoint>=4.1, which
+# langgraph 1.0.x refuses (<4.0.0) and which breaks against langchain-core 1.2.
+langgraph-checkpoint-postgres>=3.0.5,<3.1.0
+psycopg[binary,pool]>=3.2.3
 yfinance>=0.2.66
 supabase>=2.10.0
 httpx>=0.28.1

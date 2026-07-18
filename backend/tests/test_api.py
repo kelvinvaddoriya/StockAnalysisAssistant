@@ -71,80 +71,109 @@ CHAT_PAYLOAD = {
 
 
 class TestChat:
-    def _mock_agent_stream(self, tokens: list[str]):
-        """Return a mock agent whose stream() yields (AIMessage, {}) pairs."""
-        def _stream(*args, **kwargs):
-            for t in tokens:
-                yield (AIMessage(t), {})
+    @staticmethod
+    def _synth(text: str):
+        """A 'messages' stream event tagged as the synthesizer (user-facing)."""
+        return ('messages', (AIMessage(text), {'langgraph_node': 'synthesizer'}))
 
-        mock_agent = MagicMock()
-        mock_agent.stream.side_effect = _stream
-        return mock_agent
+    def _mock_desk(self, events):
+        """Return a mock desk whose stream() yields the given (mode, payload) events."""
+        def _stream(*args, **kwargs):
+            for ev in events:
+                yield ev
+
+        mock_desk = MagicMock()
+        mock_desk.stream.side_effect = _stream
+        return mock_desk
 
     def test_returns_streaming_response(self, client):
         import main as m
-        original = m.agent
-        m.agent = self._mock_agent_stream(["Hello ", "world!"])
+        original = m.desk
+        m.desk = self._mock_desk([self._synth("Hello "), self._synth("world!")])
         try:
             r = client.post('/api/chat', json=CHAT_PAYLOAD)
             assert r.status_code == 200
             assert 'text/event-stream' in r.headers['content-type']
         finally:
-            m.agent = original
+            m.desk = original
 
-    def test_streams_agent_text(self, client):
+    def test_streams_synthesizer_text(self, client):
         import main as m
-        original = m.agent
-        m.agent = self._mock_agent_stream(["Stock ", "price: ", "$182"])
+        original = m.desk
+        m.desk = self._mock_desk([self._synth("Stock "), self._synth("price: "), self._synth("$182")])
         try:
             r = client.post('/api/chat', json=CHAT_PAYLOAD)
             assert b'Stock price: $182' in r.content
         finally:
-            m.agent = original
+            m.desk = original
 
     def test_tool_messages_are_filtered(self, client):
         """ToolMessage tokens should never appear in the response."""
         import main as m
-        original = m.agent
-
-        def _stream_with_tool(*args, **kwargs):
-            yield (ToolMessage('{"raw": "tool data"}'), {})
-            yield (AIMessage('Clean answer'), {})
-
-        mock_agent = MagicMock()
-        mock_agent.stream.side_effect = _stream_with_tool
-        m.agent = mock_agent
-
+        original = m.desk
+        m.desk = self._mock_desk([
+            ('messages', (ToolMessage('{"raw": "tool data"}'), {'langgraph_node': 'synthesizer'})),
+            self._synth('Clean answer'),
+        ])
         try:
             r = client.post('/api/chat', json=CHAT_PAYLOAD)
             assert b'tool data' not in r.content
             assert b'Clean answer' in r.content
         finally:
-            m.agent = original
+            m.desk = original
+
+    def test_specialist_tokens_not_streamed(self, client):
+        """Only the synthesizer's tokens reach the user; specialist findings don't."""
+        import main as m
+        original = m.desk
+        m.desk = self._mock_desk([
+            ('messages', (AIMessage('internal market note'), {'langgraph_node': 'market'})),
+            self._synth('Final answer'),
+        ])
+        try:
+            r = client.post('/api/chat', json=CHAT_PAYLOAD)
+            assert b'internal market note' not in r.content
+            assert b'Final answer' in r.content
+        finally:
+            m.desk = original
+
+    def test_supervisor_route_emits_status_thinkitems(self, client):
+        """When the supervisor picks a route, an ephemeral status line per
+        specialist is streamed (and is not part of the saved answer)."""
+        import main as m
+        original = m.desk
+        m.desk = self._mock_desk([
+            ('updates', {'supervisor': {'route': ['fundamentals', 'news']}}),
+            self._synth('<content thesys="true">done</content>'),
+        ])
+        try:
+            body = client.post('/api/chat', json=CHAT_PAYLOAD).content.decode()
+            assert 'ephemeral="true"' in body
+            assert 'Analysing fundamentals' in body
+            assert 'Checking recent news' in body
+            assert 'Pulling market data' not in body   # market wasn't routed
+        finally:
+            m.desk = original
 
     def test_rejects_missing_fields(self, client):
         r = client.post('/api/chat', json={'threadId': 'x'})
         assert r.status_code == 422
 
-    def test_xml_wrapper_stripped_before_agent(self, client):
-        """C1Chat wraps user content in <content> — the agent should receive plain text."""
+    def test_xml_wrapper_stripped_before_desk(self, client):
+        """C1Chat wraps user content in <content> — the desk should receive plain text."""
         import main as m
-        original = m.agent
+        original = m.desk
 
-        received: list[str] = []
+        received: dict = {}
 
-        def _capture_stream(input_dict, **kwargs):
-            msgs = input_dict.get('messages', [])
-            for msg in msgs:
-                if isinstance(msg, AIMessage.__class__):
-                    pass
-                # Capture HumanMessage content
-                received.append(getattr(msg, 'content', ''))
-            yield (AIMessage('ok'), {})
+        def _capture_stream(input_dict, *args, **kwargs):
+            received['query'] = input_dict.get('query', '')
+            received['messages'] = [getattr(msg, 'content', '') for msg in input_dict.get('messages', [])]
+            yield self._synth('ok')
 
-        mock_agent = MagicMock()
-        mock_agent.stream.side_effect = _capture_stream
-        m.agent = mock_agent
+        mock_desk = MagicMock()
+        mock_desk.stream.side_effect = _capture_stream
+        m.desk = mock_desk
 
         wrapped_payload = {**CHAT_PAYLOAD, 'prompt': {
             **CHAT_PAYLOAD['prompt'],
@@ -153,9 +182,10 @@ class TestChat:
 
         try:
             client.post('/api/chat', json=wrapped_payload)
-            # The HumanMessage content seen by the agent must be stripped
-            human_contents = [c for c in received if c]
-            assert any('What is AAPL?' in c for c in human_contents)
-            assert all('<content' not in c for c in human_contents)
+            # Both the query and the HumanMessage handed to the desk must be stripped.
+            assert 'What is AAPL?' in received['query']
+            assert '<content' not in received['query']
+            assert any('What is AAPL?' in c for c in received['messages'])
+            assert all('<content' not in c for c in received['messages'])
         finally:
-            m.agent = original
+            m.desk = original

@@ -1,9 +1,0 @@
-.venv/
-__pycache__/
-*.pyc
-*.pyo
-.env
-tests/
-pytest.ini
-uv.lock
-.pytest_cache/

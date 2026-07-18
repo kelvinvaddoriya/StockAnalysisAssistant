@@ -1,6 +1,7 @@
 import re
 import os
 import html
+import atexit
 import logging
 from datetime import datetime, timezone
 
@@ -12,14 +13,14 @@ from fastapi import FastAPI, BackgroundTasks, Depends, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from langchain_core.tools import tool
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
-from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.prebuilt import create_react_agent
 
-import yfinance as yf
 from supabase import create_client, Client as SupabaseClient
+
+# The multi-agent "analyst desk" — supervisor → specialists → synthesizer.
+from agents.graph import build_desk_graph
+from agents.state import SUPERVISOR, SYNTHESIZER
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 log = logging.getLogger(__name__)
@@ -55,68 +56,40 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# LLM + agent
+# Analyst desk (multi-agent graph)
 # ---------------------------------------------------------------------------
-model = ChatOpenAI(
-    model='c1/openai/gpt-5/v-20250930',
-    base_url='https://api.thesys.dev/v1/embed/'
-)
+# Per-thread conversation memory lives in this checkpointer keyed on thread_id.
+# It has to outlive the process: Render's free tier spins the service down after
+# 15 minutes idle, and an in-process saver would drop the agent's context every
+# time that happens — the user would still see their chat history (that comes
+# from Supabase) but the desk would answer follow-ups with no memory of them.
+# Falls back to in-memory when DATABASE_URL is unset, which keeps local dev and
+# the test suite working without a database.
+_db_url = os.getenv('DATABASE_URL', '')
+if _db_url:
+    from psycopg_pool import ConnectionPool
+    from langgraph.checkpoint.postgres import PostgresSaver
 
-checkpointer = InMemorySaver()
+    # Supabase's pooler runs pgbouncer in transaction mode, which cannot hold
+    # server-side prepared statements across checkouts — hence prepare_threshold=0.
+    _pool = ConnectionPool(
+        conninfo=_db_url,
+        max_size=5,
+        kwargs={'autocommit': True, 'prepare_threshold': 0},
+        open=True,                # explicit: implicit opening is deprecated
+    )
+    checkpointer = PostgresSaver(_pool)
+    checkpointer.setup()          # idempotent — creates the checkpoint tables
+    log.info('Checkpointer: Postgres')
 
+    # Render sends SIGTERM on every spin-down and redeploy; uvicorn exits cleanly
+    # on it, so atexit fires and the pool's worker threads shut down quietly.
+    atexit.register(_pool.close)
+else:
+    checkpointer = InMemorySaver()
+    log.warning('DATABASE_URL not set — agent memory is in-process and will not survive a restart')
 
-_TICKER_HELP = (
-    'Use the Yahoo Finance ticker convention: US-listed stocks use the plain '
-    'symbol (AAPL, MSFT). Non-US listings require an exchange suffix — examples: '
-    'India NSE ".NS" (RELIANCE.NS, TCS.NS), India BSE ".BO", London ".L" '
-    '(BARC.L), Tokyo ".T" (7203.T), Hong Kong ".HK" (0700.HK), Frankfurt ".DE" '
-    '(SAP.DE), Paris ".PA", Toronto ".TO", Australia ".AX". '
-    'If a call returns "no data", retry once with the most likely exchange suffix '
-    'based on the company\'s primary listing.'
-)
-
-
-@tool('get_stock_price',
-      description='Returns the current closing price for a ticker symbol. ' + _TICKER_HELP)
-def get_stock_price(ticker: str):
-    hist = yf.Ticker(ticker).history()
-    if hist.empty:
-        return f'No data for ticker "{ticker}". If this is a non-US stock, retry with the exchange suffix (e.g. .NS, .L, .T, .HK).'
-    return float(hist['Close'].iloc[-1])
-
-
-@tool('get_historical_stock_price',
-      description='Returns the closing price history between two ISO dates (YYYY-MM-DD). ' + _TICKER_HELP)
-def get_historical_stock_price(ticker: str, start_date: str, end_date: str):
-    hist = yf.Ticker(ticker).history(start=start_date, end=end_date)
-    if hist.empty:
-        return f'No data for ticker "{ticker}" between {start_date} and {end_date}. If non-US, retry with exchange suffix.'
-    return hist['Close'].to_dict()
-
-
-@tool('get_balance_sheet',
-      description='Returns the latest balance sheet for a ticker symbol. ' + _TICKER_HELP)
-def get_balance_sheet(ticker: str):
-    bs = yf.Ticker(ticker).balance_sheet
-    if bs.empty:
-        return f'No balance sheet data for "{ticker}". If non-US, retry with exchange suffix.'
-    return bs.to_dict()
-
-
-@tool('get_stock_news',
-      description='Returns recent news articles for a ticker symbol. ' + _TICKER_HELP)
-def get_stock_news(ticker: str):
-    news = yf.Ticker(ticker).news
-    if not news:
-        return f'No news for "{ticker}". If non-US, retry with exchange suffix.'
-    return news
-
-
-agent = create_react_agent(
-    model=model,
-    tools=[get_stock_price, get_historical_stock_price, get_balance_sheet, get_stock_news],
-    checkpointer=checkpointer,
-)
+desk = build_desk_graph(checkpointer)
 
 # ---------------------------------------------------------------------------
 # Request / response models
@@ -149,6 +122,25 @@ def extract_text(content) -> str:
             for b in content
         )
     return str(content) if content else ''
+
+
+# Ephemeral status lines shown while the desk works. C1Chat renders
+# <thinkitem ephemeral> live during streaming and drops it from the saved
+# message, so these never get persisted (we also keep them out of `chunks`).
+_STATUS = {
+    'fundamentals': 'Analysing fundamentals',
+    'news': 'Checking recent news',
+    'market': 'Pulling market data',
+}
+
+
+def thinkitem(title: str) -> str:
+    """Wrap a status line as a thesys ephemeral think-item."""
+    return (
+        f'<thinkitem ephemeral="true">'
+        f'<thinkitemtitle>{html.escape(title)}</thinkitemtitle>'
+        f'</thinkitem>'
+    )
 
 
 _XML_WRAPPER = re.compile(r'<content[^>]*>(.*?)</content>', re.DOTALL | re.IGNORECASE)
@@ -356,31 +348,33 @@ async def chat(request: RequestObject, background_tasks: BackgroundTasks, user: 
     chunks: list[str] = []
 
     def generate():
-        for token, _ in agent.stream(
-            {'messages': [
-                SystemMessage(
-                    'You are a stock analysis assistant. '
-                    'You have the ability to get real-time stock prices, '
-                    'historical stock prices (given a date range), news and balance sheet data '
-                    'for a given ticker symbol. '
-                    'Yahoo Finance ticker convention: US-listed use the plain symbol; '
-                    'non-US listings require an exchange suffix '
-                    '(e.g. RELIANCE.NS for India NSE, BARC.L for London, 7203.T for Tokyo, '
-                    '0700.HK for Hong Kong, SAP.DE for Frankfurt). '
-                    'When a user names a non-US company, use the suffix for its primary exchange. '
-                    'If a tool returns "no data", retry once with the most likely suffix before '
-                    'telling the user the ticker is unavailable.'
-                ),
-                HumanMessage(user_content)
-            ]},
-            stream_mode='messages',
-            config=config
+        # 'updates' lets us emit status the moment the supervisor picks a route;
+        # 'messages' streams LLM tokens. Only the synthesizer's tokens are the
+        # user-facing answer — specialist tokens (cheap-model findings) and tool
+        # JSON are filtered out by node name.
+        for mode, payload in desk.stream(
+            {'query': user_content, 'messages': [HumanMessage(user_content)]},
+            stream_mode=['updates', 'messages'],
+            config=config,
         ):
+            if mode == 'updates':
+                supervisor_update = payload.get(SUPERVISOR)
+                if supervisor_update:
+                    for name in supervisor_update.get('route') or []:
+                        title = _STATUS.get(name)
+                        if title:
+                            yield thinkitem(title)   # ephemeral — not persisted
+                continue
+
+            # mode == 'messages'
+            token, meta = payload
+            if meta.get('langgraph_node') != SYNTHESIZER:
+                continue                              # not the final answer
             if isinstance(token, ToolMessage):
-                continue  # never yield raw tool JSON
+                continue                              # never yield raw tool JSON
             text = extract_text(token.content)
             if text:
-                chunks.append(text)
+                chunks.append(text)                   # only synthesizer text is saved
                 yield text
 
     # Closure captures `chunks` list by reference.
@@ -394,7 +388,13 @@ async def chat(request: RequestObject, background_tasks: BackgroundTasks, user: 
     return StreamingResponse(
         generate(),
         media_type='text/event-stream',
-        headers={'Cache-Control': 'no-cache, no-transform', 'Connection': 'keep-alive'},
+        # X-Accel-Buffering tells nginx-based proxies (Render's included) not to
+        # buffer the stream. Replaces the EB-only .platform/nginx override.
+        headers={
+            'Cache-Control': 'no-cache, no-transform',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
+        },
     )
 
 

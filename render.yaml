@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: bourse-backend
+    runtime: python
+    plan: free
+    region: frankfurt          # matches the old eu-central-1 EB environment
+    rootDir: backend
+    # Build from uv.lock, not requirements.txt. A bare `pip install -r
+    # requirements.txt` re-resolves from scratch and floats the whole langchain
+    # stack (langgraph 1.0.5 → 1.2.9, langchain-core 1.2.2 → 1.4.9), because every
+    # pin is a `>=`. The test suite stubs langgraph, so it would not catch that.
+    buildCommand: pip install uv && uv sync --frozen --no-dev
+    startCommand: uv run uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      # sync: false → set the value in the Render dashboard, never in git.
+      - key: OPENAI_API_KEY          # Thesys-routed GPT-5 (synthesizer)
+        sync: false
+      - key: DESK_OPENAI_API_KEY     # real OpenAI gpt-4o-mini (supervisor/specialists)
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY            # service_role key — bypasses RLS
+        sync: false
+      - key: DATABASE_URL            # Supabase Postgres, backs the LangGraph checkpointer
+        sync: false
+      - key: ALLOWED_ORIGINS         # comma-separated, e.g. https://bourse.vercel.app
+        sync: false

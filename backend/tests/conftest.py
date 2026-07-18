@@ -9,6 +9,10 @@ from unittest.mock import MagicMock
 # Ensure env vars are set (empty → Supabase disabled path)
 os.environ.setdefault('SUPABASE_URL', '')
 os.environ.setdefault('SUPABASE_KEY', '')
+# Forced empty, not setdefault: tests must take the in-memory checkpointer path
+# even on a machine that has DATABASE_URL exported. load_dotenv() won't override
+# an already-set var, so this also shields against a .env on disk.
+os.environ['DATABASE_URL'] = ''
 
 # ── stub out every dep that main.py imports at module level ──────────────────
 
@@ -41,5 +45,13 @@ sys.modules.setdefault('langgraph',                       MagicMock())
 sys.modules.setdefault('langgraph.prebuilt',              MagicMock())
 sys.modules.setdefault('langgraph.checkpoint',            MagicMock())
 sys.modules.setdefault('langgraph.checkpoint.memory',     MagicMock())
+sys.modules.setdefault('langgraph.graph',                 MagicMock())
+
+# agents.state does `Annotated[list, add_messages]` at class-definition time, so
+# the stub must expose a real callable (the value is otherwise inert in tests).
+_lg_graph_message = MagicMock()
+_lg_graph_message.add_messages = lambda left, right: (left or []) + (right or [])
+sys.modules.setdefault('langgraph.graph.message',         _lg_graph_message)
+
 sys.modules.setdefault('yfinance',                        MagicMock())
 sys.modules.setdefault('supabase',                        MagicMock())
