@@ -205,7 +205,16 @@ async def require_user(authorization: str | None = Header(default=None)) -> dict
 # ---------------------------------------------------------------------------
 
 @app.get('/api/health')
-async def health():
+async def health(deep: int = 0):
+    """Liveness by default; full dependency probe with ?deep=1.
+
+    Render polls this every few seconds. Probing Supabase on every poll cost
+    roughly 34k needless REST queries a day and told us nothing the process
+    being up didn't already — the probe is opt-in now.
+    """
+    if not deep:
+        return {'status': 'ok', 'db_configured': db is not None}
+
     status = {'db': False, 'tables': []}
     if db:
         try:

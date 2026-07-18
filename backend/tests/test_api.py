@@ -34,12 +34,19 @@ class TestHealth:
         r = client.get('/api/health')
         assert r.status_code == 200
 
+    def test_shallow_probe_does_not_touch_db(self, client):
+        # The default path is what Render polls every few seconds — it must stay
+        # free of dependency calls.
+        data = client.get('/api/health').json()
+        assert data['status'] == 'ok'
+        assert 'tables' not in data
+
     def test_db_false_when_no_credentials(self, client):
-        data = r = client.get('/api/health').json()
+        data = client.get('/api/health?deep=1').json()
         assert data['db'] is False
 
     def test_tables_empty_when_no_credentials(self, client):
-        data = client.get('/api/health').json()
+        data = client.get('/api/health?deep=1').json()
         assert data['tables'] == []
 
 
