@@ -104,6 +104,28 @@ class TestChat:
         finally:
             m.desk = original
 
+    def test_mid_stream_failure_is_surfaced_not_silent(self, client):
+        """A dead pooled DB connection used to kill the generator after the 200
+        headers were flushed, leaving the user an empty assistant bubble."""
+        import main as m
+        original = m.desk
+
+        def _boom(*args, **kwargs):
+            yield self._synth('Partial answer')
+            raise RuntimeError('SSL error: unexpected eof while reading')
+
+        mock_desk = MagicMock()
+        mock_desk.stream.side_effect = _boom
+        m.desk = mock_desk
+        try:
+            r = client.post('/api/chat', json=CHAT_PAYLOAD)
+            assert r.status_code == 200          # headers already sent — can't 500
+            body = r.content.decode()
+            assert 'Partial answer' in body      # what streamed before the fault survives
+            assert 'hit an error' in body        # and the user is told something broke
+        finally:
+            m.desk = original
+
     def test_streams_synthesizer_text(self, client):
         import main as m
         original = m.desk

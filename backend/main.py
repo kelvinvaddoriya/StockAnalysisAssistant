@@ -64,6 +64,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware('http')
+async def _allow_timing(request, call_next):
+    """Let the SPA read Resource Timing for its own API calls.
+
+    Now that the SPA and API are on different origins, responseStart/transferSize
+    are zeroed out in the browser unless the response opts in. Without this you
+    cannot tell a slow server from a proxy buffering the SSE stream — the symptom
+    looks identical from the client. Scoped to allowlisted origins only.
+    """
+    response = await call_next(request)
+    origin = _clean_origin(request.headers.get('origin', ''))
+    if origin and origin in _origins:
+        response.headers['Timing-Allow-Origin'] = origin
+    return response
+
 # ---------------------------------------------------------------------------
 # Analyst desk (multi-agent graph)
 # ---------------------------------------------------------------------------
@@ -86,6 +102,14 @@ if _db_url:
         max_size=5,
         kwargs={'autocommit': True, 'prepare_threshold': 0},
         open=True,                # explicit: implicit opening is deprecated
+        # Supabase's pooler hangs up on idle connections, and Render's free tier
+        # leaves the service idle for long stretches. Without `check` (which
+        # defaults to None — no validation) the pool happily hands out a dead
+        # socket and the next chat dies mid-stream with
+        # "SSL error: unexpected eof while reading".
+        check=ConnectionPool.check_connection,
+        max_idle=120,             # recycle well before the pooler drops us
+        max_lifetime=1800,
     )
     checkpointer = PostgresSaver(_pool)
     checkpointer.setup()          # idempotent — creates the checkpoint tables
@@ -370,30 +394,41 @@ async def chat(request: RequestObject, background_tasks: BackgroundTasks, user: 
         # 'messages' streams LLM tokens. Only the synthesizer's tokens are the
         # user-facing answer — specialist tokens (cheap-model findings) and tool
         # JSON are filtered out by node name.
-        for mode, payload in desk.stream(
-            {'query': user_content, 'messages': [HumanMessage(user_content)]},
-            stream_mode=['updates', 'messages'],
-            config=config,
-        ):
-            if mode == 'updates':
-                supervisor_update = payload.get(SUPERVISOR)
-                if supervisor_update:
-                    for name in supervisor_update.get('route') or []:
-                        title = _STATUS.get(name)
-                        if title:
-                            yield thinkitem(title)   # ephemeral — not persisted
-                continue
+        #
+        # The whole loop is guarded: StreamingResponse has already flushed a 200
+        # by the time this runs, so an exception here cannot become an error
+        # status. Unguarded it just closes the stream, and the user gets an empty
+        # assistant bubble with nothing to go on. Emit something instead.
+        try:
+            for mode, payload in desk.stream(
+                {'query': user_content, 'messages': [HumanMessage(user_content)]},
+                stream_mode=['updates', 'messages'],
+                config=config,
+            ):
+                if mode == 'updates':
+                    supervisor_update = payload.get(SUPERVISOR)
+                    if supervisor_update:
+                        for name in supervisor_update.get('route') or []:
+                            title = _STATUS.get(name)
+                            if title:
+                                yield thinkitem(title)   # ephemeral — not persisted
+                    continue
 
-            # mode == 'messages'
-            token, meta = payload
-            if meta.get('langgraph_node') != SYNTHESIZER:
-                continue                              # not the final answer
-            if isinstance(token, ToolMessage):
-                continue                              # never yield raw tool JSON
-            text = extract_text(token.content)
-            if text:
-                chunks.append(text)                   # only synthesizer text is saved
-                yield text
+                # mode == 'messages'
+                token, meta = payload
+                if meta.get('langgraph_node') != SYNTHESIZER:
+                    continue                              # not the final answer
+                if isinstance(token, ToolMessage):
+                    continue                              # never yield raw tool JSON
+                text = extract_text(token.content)
+                if text:
+                    chunks.append(text)                   # only synthesizer text is saved
+                    yield text
+        except Exception:
+            log.exception('Desk stream failed — thread=%s user=%s', thread_id, user['id'])
+            # Deliberately not appended to `chunks`: this must not be persisted as
+            # if it were the assistant's answer.
+            yield '\n\n_The analyst desk hit an error generating this answer. Please try again._'
 
     # Closure captures `chunks` list by reference.
     # BackgroundTasks runs AFTER StreamingResponse is fully sent,
