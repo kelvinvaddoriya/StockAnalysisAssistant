@@ -60,7 +60,7 @@ The browser also talks **directly** to Supabase for login/signup (using the publ
 This is the most important diagram. It shows what happens when a logged-in user types "Should I buy RELIANCE.NS?" and hits send.
 
 ```
-Browser            EB / FastAPI         Desk graph (LangGraph)                       yfinance     Supabase
+Browser          Render / FastAPI       Desk graph (LangGraph)                       yfinance     Supabase
    │                    │                    │                                          │            │
    │ POST /api/chat     │                    │                                          │            │
    │ Authorization:Bearer                    │                                          │            │
@@ -216,8 +216,8 @@ Everything runs on free tiers. There is no cloud account to manage beyond the th
 git push origin main
       │
       ├── changed under backend/**   ──► Render auto-deploy
-      │                                    build:  pip install -r requirements.txt
-      │                                    start:  uvicorn main:app --port $PORT
+      │                                    build:  pip install uv && uv sync --frozen --no-dev
+      │                                    start:  uv run uvicorn main:app --port $PORT
       │                                    gate:   /api/health must return 200
       │
       ├── changed under frontend/**  ──► Vercel auto-deploy
@@ -275,7 +275,7 @@ Tests:
 
 ```bash
 cd backend
-pytest                         # 32 tests, mocks the desk + DB
+pytest                         # 34 tests, mocks the desk + DB
 ```
 
 Frontend tests:
