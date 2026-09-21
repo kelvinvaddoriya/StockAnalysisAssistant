@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy — Bourse</title>
+  <meta name="description" content="What Bourse collects, why, who processes it, and how to have it deleted." />
+  <link rel="canonical" href="https://stock-analysis-assistant.vercel.app/privacy" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/static.css" />
+</head>
+<body>
+  <div class="bar"></div>
+  <main class="wrap">
+    <a class="brand" href="/">
+      <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M9 22 L 9 10 L 16 18 L 23 10 L 23 22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Bourse</span>
+    </a>
+
+    <h1>Privacy Policy</h1>
+    <p class="meta">Last updated 22 September 2026</p>
+
+    <p>Bourse is an AI stock-analysis assistant. This page explains what personal data it collects, why, where that data goes, and how to have it removed. Bourse is run by an individual developer, not a company. Questions go to <a href="mailto:CONTACT_EMAIL">CONTACT_EMAIL</a>.</p>
+
+    <h2>What we collect</h2>
+    <table>
+      <tr><th>Data</th><th>Why</th><th>Where it's kept</th></tr>
+      <tr><td>Email address and password (stored as a one-way hash)</td><td>To create your account and sign you in</td><td>Supabase (authentication provider)</td></tr>
+      <tr><td>Display name, if you set one</td><td>Shown in the app sidebar</td><td>Supabase, in your account profile</td></tr>
+      <tr><td>Your questions and Bourse's answers</td><td>To produce answers, and to keep your enquiry history so you can reopen it</td><td>Supabase database</td></tr>
+      <tr><td>Conversation context for follow-up questions</td><td>So the assistant remembers earlier turns in an enquiry</td><td>Supabase database</td></tr>
+      <tr><td>Profile photo, if you upload one</td><td>Shown next to your name</td><td><strong>Only in your own browser</strong> (localStorage). It is never uploaded to our servers.</td></tr>
+      <tr><td>Theme preference and sign-in session</td><td>To remember light/dark mode and keep you signed in</td><td>Your browser (localStorage)</td></tr>
+      <tr><td>Anonymous usage statistics (pages viewed, referrer, country, device type)</td><td>To understand how the site is used</td><td>Vercel Web Analytics. No cookies, no cross-site tracking, and no personal identifiers.</td></tr>
+      <tr><td>Standard server logs (IP address, request time)</td><td>Security and debugging</td><td>Our hosting providers, kept for a short period</td></tr>
+    </table>
+    <p>We do not sell your data, show ads, or use your data to build advertising profiles.</p>
+
+    <h2>Who processes your data</h2>
+    <p>Bourse relies on these third-party services. Each one receives only what it needs to do its job:</p>
+    <ul>
+      <li><strong>Supabase</strong>: accounts, authentication and the database holding your enquiries.</li>
+      <li><strong>OpenAI</strong> and <strong>Thesys</strong>: the AI models that read your question and write the answer. The text of your question is sent to them. Your email is not.</li>
+      <li><strong>Render</strong>: hosts the backend server.</li>
+      <li><strong>Vercel</strong>: hosts the website and provides cookie-free analytics.</li>
+      <li><strong>Yahoo Finance</strong> (through the open-source <code>yfinance</code> library): market data. Only ticker symbols and date ranges are sent, never anything about you.</li>
+      <li><strong>Cloudflare Turnstile</strong>, if enabled: checks that sign-ups come from a person rather than a bot.</li>
+    </ul>
+    <p>Some of these providers process data outside your country, including in the United States.</p>
+
+    <h2>Cookies</h2>
+    <p>Bourse sets no cookies of its own and uses no advertising or tracking cookies. Your sign-in session is kept in browser localStorage, which is strictly necessary for the app to work. That is why there is no cookie banner.</p>
+
+    <h2>How long we keep it</h2>
+    <p>Enquiries are kept until you delete them. Use the trash icon next to any enquiry in the sidebar and it is removed immediately. Your account is kept until you ask us to delete it.</p>
+
+    <h2>Your rights</h2>
+    <p>You can ask to see, correct, export or delete your personal data at any time. Email <a href="mailto:CONTACT_EMAIL">CONTACT_EMAIL</a> from the address on your account and we will act on it within 30 days. Deleting your account removes your profile and all saved enquiries. If you are in the EU or UK, you also have the right to complain to your local data-protection authority.</p>
+
+    <h2>Children</h2>
+    <p>Bourse is not intended for anyone under 18, and we do not knowingly collect data from children.</p>
+
+    <h2>Changes</h2>
+    <p>If this policy changes, the date at the top will change with it. Significant changes will also be noted in the app.</p>
+
+    <footer>
+      <a href="/">Bourse</a><a href="/terms">Terms of Use</a><a href="/privacy">Privacy</a>
+    </footer>
+  </main>
+</body>
+</html>

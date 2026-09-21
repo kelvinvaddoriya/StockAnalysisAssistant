@@ -1,8 +1,11 @@
 import re
 import os
 import html
+import time
 import atexit
 import logging
+import threading
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
@@ -225,6 +228,53 @@ async def require_user(authorization: str | None = Header(default=None)) -> dict
 
 
 # ---------------------------------------------------------------------------
+# Rate limiting
+# ---------------------------------------------------------------------------
+# Every /api/chat call spends real OpenAI + Thesys tokens, and anyone can sign
+# up. Without a cap, one account (or one script) can drain the API budget.
+#
+# In-process on purpose: the service runs as a single Render instance, so a
+# dict is authoritative. The cost is that counters reset on restart, which
+# only ever errs in the user's favour. Move this to Postgres/Redis if the
+# service is ever scaled to more than one instance.
+_CHAT_LIMITS = (
+    (int(os.getenv('CHAT_LIMIT_PER_10_MIN', '20')), 600),
+    (int(os.getenv('CHAT_LIMIT_PER_DAY', '150')), 86_400),
+)
+_CHAT_WINDOW_MAX = max(w for _, w in _CHAT_LIMITS)
+_chat_hits: dict[str, deque[float]] = defaultdict(deque)
+_chat_hits_lock = threading.Lock()
+
+
+def _check_chat_rate(user_id: str) -> None:
+    """Record one chat request for user_id, or raise 429 if a limit is hit."""
+    now = time.monotonic()
+    with _chat_hits_lock:
+        hits = _chat_hits[user_id]
+        while hits and now - hits[0] >= _CHAT_WINDOW_MAX:
+            hits.popleft()
+        for limit, window in _CHAT_LIMITS:
+            in_window = [t for t in hits if now - t < window]
+            if len(in_window) >= limit:
+                retry_after = int(window - (now - in_window[0])) + 1
+                log.warning('Rate limit hit — user=%s limit=%d/%ds', user_id, limit, window)
+                raise HTTPException(
+                    status_code=429,
+                    detail=f'Too many enquiries. Please try again in {_human_wait(retry_after)}.',
+                    headers={'Retry-After': str(retry_after)},
+                )
+        hits.append(now)
+
+
+def _human_wait(seconds: int) -> str:
+    if seconds < 90:
+        return f'{seconds} seconds'
+    if seconds < 5400:
+        return f'{round(seconds / 60)} minutes'
+    return f'{round(seconds / 3600)} hours'
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -382,6 +432,8 @@ async def chat(request: RequestObject, background_tasks: BackgroundTasks, user: 
         owner = _chat_owner(thread_id)
         if owner is not None and owner != user['id']:
             raise HTTPException(status_code=404, detail='Chat not found')
+
+    _check_chat_rate(user['id'])
 
     log.info('Chat request — user=%s thread=%s  prompt=%r…',
              user['id'], thread_id, user_content[:60])

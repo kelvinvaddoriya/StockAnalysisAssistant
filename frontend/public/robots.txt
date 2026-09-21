@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://stock-analysis-assistant.vercel.app/sitemap.xml

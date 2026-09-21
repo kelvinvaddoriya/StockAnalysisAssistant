@@ -19,6 +19,8 @@ def _fake_user():
 
 @pytest.fixture
 def client():
+    import main as m
+    m._chat_hits.clear()          # rate-limit counters must not leak between tests
     app.dependency_overrides[require_user] = _fake_user
     try:
         with TestClient(app) as c:
@@ -218,3 +220,53 @@ class TestChat:
             assert all('<content' not in c for c in received['messages'])
         finally:
             m.desk = original
+
+
+# ── /api/chat rate limiting ───────────────────────────────────────────────────
+
+class TestChatRateLimit:
+
+    def _quiet_desk(self):
+        desk = MagicMock()
+        desk.stream.side_effect = lambda *a, **kw: iter(())
+        return desk
+
+    def test_429_after_short_window_limit(self, client, monkeypatch):
+        import main as m
+        monkeypatch.setattr(m, '_CHAT_LIMITS', ((3, 600), (100, 86_400)))
+        monkeypatch.setattr(m, 'desk', self._quiet_desk())
+        for _ in range(3):
+            assert client.post('/api/chat', json=CHAT_PAYLOAD).status_code == 200
+        r = client.post('/api/chat', json=CHAT_PAYLOAD)
+        assert r.status_code == 429
+        assert int(r.headers['Retry-After']) > 0
+        assert 'Too many enquiries' in r.json()['detail']
+
+    def test_rejected_request_does_not_reach_desk(self, client, monkeypatch):
+        import main as m
+        monkeypatch.setattr(m, '_CHAT_LIMITS', ((1, 600),))
+        desk = self._quiet_desk()
+        monkeypatch.setattr(m, 'desk', desk)
+        client.post('/api/chat', json=CHAT_PAYLOAD)
+        client.post('/api/chat', json=CHAT_PAYLOAD)
+        assert desk.stream.call_count == 1        # no tokens spent on the blocked call
+
+    def test_limits_are_per_user(self, client, monkeypatch):
+        import main as m
+        monkeypatch.setattr(m, '_CHAT_LIMITS', ((1, 600),))
+        monkeypatch.setattr(m, 'desk', self._quiet_desk())
+        assert client.post('/api/chat', json=CHAT_PAYLOAD).status_code == 200
+        app.dependency_overrides[require_user] = lambda: {'id': 'someone-else', 'email': 'b@example.com'}
+        assert client.post('/api/chat', json=CHAT_PAYLOAD).status_code == 200
+
+    def test_old_hits_expire(self, client, monkeypatch):
+        import main as m
+        monkeypatch.setattr(m, '_CHAT_LIMITS', ((1, 600),))
+        monkeypatch.setattr(m, '_CHAT_WINDOW_MAX', 600)
+        monkeypatch.setattr(m, 'desk', self._quiet_desk())
+        clock = [1000.0]
+        monkeypatch.setattr(m.time, 'monotonic', lambda: clock[0])
+        assert client.post('/api/chat', json=CHAT_PAYLOAD).status_code == 200
+        assert client.post('/api/chat', json=CHAT_PAYLOAD).status_code == 429
+        clock[0] += 601
+        assert client.post('/api/chat', json=CHAT_PAYLOAD).status_code == 200

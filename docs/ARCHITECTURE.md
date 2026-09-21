@@ -266,8 +266,10 @@ npm run dev                    # :3000, proxies /api/* to :8888
 | `SUPABASE_URL` / `SUPABASE_KEY` | backend | no | `service_role` key. Unset → chat persistence disabled, app still runs |
 | `DATABASE_URL` | backend | prod only | Supabase Postgres URI backing the checkpointer. Unset → in-memory, wiped on restart |
 | `ALLOWED_ORIGINS` | backend | prod only | Comma-separated origins appended to the CORS allowlist. Unset locally — `localhost:3000` is always allowed |
+| `CHAT_LIMIT_PER_10_MIN` / `CHAT_LIMIT_PER_DAY` | backend | no | Per-user caps on `/api/chat` (defaults 20 and 150). In-process counters: correct for one instance, reset on restart |
 | `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` | frontend build | yes | Public `anon` key; baked into the bundle |
 | `VITE_API_BASE` | frontend build | prod only | Backend origin, e.g. `https://bourse-backend.onrender.com`. **Leave unset in dev** so the Vite proxy handles `/api` |
+| `VITE_TURNSTILE_SITE_KEY` | frontend build | no | Enables the Cloudflare Turnstile check on sign-in/sign-up. Set it **only after** enabling CAPTCHA in Supabase → Auth → Attack Protection. Supabase CAPTCHA on without this var breaks all logins |
 
 The four `prod only` rows are the ones that must be set in the Render and Vercel dashboards; all of them are deliberately no-ops locally.
 

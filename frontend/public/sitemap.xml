@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Only public URLs. Everything past the login screen is per-user and not indexable. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://stock-analysis-assistant.vercel.app/</loc>
+    <lastmod>2026-09-22</lastmod>
+  </url>
+  <url>
+    <loc>https://stock-analysis-assistant.vercel.app/privacy</loc>
+    <lastmod>2026-09-22</lastmod>
+  </url>
+  <url>
+    <loc>https://stock-analysis-assistant.vercel.app/terms</loc>
+    <lastmod>2026-09-22</lastmod>
+  </url>
+</urlset>

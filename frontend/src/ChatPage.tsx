@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { C1Chat, useThreadListManager, useThreadManager } from '@thesysai/genui-sdk'
+import { C1Chat, ThemeProvider, useThreadListManager, useThreadManager } from '@thesysai/genui-sdk'
 import { supabase, authedFetch } from './supabase'
 import SettingsPage from './SettingsPage'
 import { formatDate, profileInitials } from './utils'
@@ -20,7 +20,7 @@ async function chatProcessMessage({
 }): Promise<Response> {
   const lastUser = [...messages].reverse().find(m => m.role === 'user')
   if (!lastUser) throw new Error('No user message to send')
-  return authedFetch('/api/chat', {
+  const res = await authedFetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -30,6 +30,14 @@ async function chatProcessMessage({
     }),
     signal: abortController.signal,
   })
+  if (res.status === 429) {
+    // Rate limited. Show the backend's reason as the assistant's reply rather
+    // than letting C1Chat fail on a non-2xx response with no explanation.
+    const detail = await res.json().then(b => b?.detail).catch(() => null)
+    const text = `_${detail ?? 'Too many enquiries. Please wait a few minutes and try again.'}_`
+    return new Response(text, { status: 200, headers: { 'Content-Type': 'text/plain' } })
+  }
+  return res
 }
 
 interface User {
@@ -216,15 +224,15 @@ function DeleteModal({
 }) {
   return (
     <div className="del-overlay" onClick={onCancel}>
-      <div className="del-modal" onClick={e => e.stopPropagation()}>
+      <div className="del-modal" role="alertdialog" aria-modal="true" aria-labelledby="del-heading" onClick={e => e.stopPropagation()}>
         <div className="del-icon">
-          <svg viewBox="0 0 24 24" width="26" height="26" fill="none">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" aria-hidden="true">
             <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             <path d="M10 11v5M14 11v5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
           </svg>
         </div>
         <div className="del-body">
-          <p className="del-heading">Delete enquiry</p>
+          <p className="del-heading" id="del-heading">Delete enquiry</p>
           <p className="del-sub">
             <span className="del-name">"{title}"</span> will be permanently removed.
             This cannot be undone.
@@ -338,152 +346,161 @@ export default function ChatPage({ user, onLogout }: Props) {
   const topbarTitle   = view === 'settings' ? 'Settings' : threadTitle
 
   return (
-    <div className={`app${sidebarOpen ? '' : ' sidebar-collapsed'}`}>
+    <ThemeProvider mode='dark'>
+      <div className={`app${sidebarOpen ? '' : ' sidebar-collapsed'}`}>
 
-      {/* SIDEBAR */}
-      <aside className={`sidebar${sidebarOpen ? ' open' : ' closed'}`}>
-        <div className="brand">
-          <div className="brand-mark">
-            <svg viewBox="0 0 32 32" width="22" height="22">
-              <circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" strokeWidth="1" />
-              <path
-                d="M9 22 L 9 10 L 16 18 L 23 10 L 23 22"
-                fill="none" stroke="currentColor" strokeWidth="1.4"
-                strokeLinecap="round" strokeLinejoin="round"
-              />
-            </svg>
+        {/* SIDEBAR */}
+        <aside className={`sidebar${sidebarOpen ? ' open' : ' closed'}`}>
+          <div className="brand">
+            <div className="brand-mark">
+              <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
+                <circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" strokeWidth="1" />
+                <path
+                  d="M9 22 L 9 10 L 16 18 L 23 10 L 23 22"
+                  fill="none" stroke="currentColor" strokeWidth="1.4"
+                  strokeLinecap="round" strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+            <div className="brand-name">
+              <div className="brand-word">Bourse</div>
+              <div className="brand-tag">est.2025</div>
+            </div>
           </div>
-          <div className="brand-name">
-            <div className="brand-word">Bourse</div>
-            <div className="brand-tag">est.2025</div>
-          </div>
-        </div>
 
-        <button className="new-chat" onClick={newChat}>
-          <span className="plus">+</span> New enquiry
-        </button>
-
-        <div className="side-section">
-          <div className="side-label">Recent enquiries</div>
-          <ul className="hist">
-            {threads.length === 0 && (
-              <li className="hist-empty">No past enquiries yet</li>
-            )}
-            {threads.map(t => (
-              <li
-                key={t.thread_id}
-                className={`hist-item${selectedThread?.thread_id === t.thread_id ? ' active' : ''}`}
-                onClick={() => openThread(t)}
-              >
-                <span className="hist-title">{t.title}</span>
-                <span className="hist-time">{formatDate(t.updated_at)}</span>
-                <button
-                  className="hist-delete"
-                  onClick={(e) => deleteThread(e, t)}
-                  title="Delete enquiry"
-                >
-                  <svg viewBox="0 0 16 16" width="13" height="13" fill="none">
-                    <path d="M2 4h12M6 4V2.5h4V4M13 4l-.75 9.5H3.75L3 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M6.5 7.5v4M9.5 7.5v4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-                  </svg>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="side-foot">
-          <MarketStatus />
-          <div className="user-row">
-            <button className="user-row-main" onClick={() => setView('settings')}>
-              <div className="avatar">
-                {avatarUrl
-                  ? <img src={avatarUrl} alt="Profile" className="avatar-img" />
-                  : initials
-                }
-              </div>
-              <div className="user-row-text">
-                <div className="user-name">{displayName || user.email}</div>
-                <div className="user-plan">Equity research · Pro</div>
-              </div>
-            </button>
-            <button className="logout-small" onClick={handleLogout} title="Sign out">↩</button>
-          </div>
-        </div>
-      </aside>
-
-      {/* MAIN */}
-      <main className="main">
-        <header className="topbar">
-          <button
-            className="icon-btn"
-            onClick={() => setSidebarOpen(s => !s)}
-            aria-label="Toggle sidebar"
-          >
-            <svg viewBox="0 0 20 20" width="18" height="18">
-              <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-            </svg>
+          <button className="new-chat" onClick={newChat}>
+            <span className="plus">+</span> New enquiry
           </button>
 
-          <div className="thread-title">
-            <span className="thread-eyebrow">{topbarEyebrow}</span>
-            <h1>{topbarTitle}</h1>
-          </div>
-
-          <div className="top-actions">
-            {view === 'settings' ? (
-              <button className="rbtn rbtn-ghost" onClick={() => setView('chat')}>
-                ← Back
-              </button>
-            ) : selectedThread ? (
-              <button className="rbtn rbtn-ghost" onClick={closeThread}>
-                ← New enquiry
-              </button>
-            ) : null}
-            <button className="theme-toggle" onClick={toggleTheme} aria-label="Toggle theme" title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
-              {theme === 'dark' ? (
-                <svg viewBox="0 0 20 20" width="15" height="15" fill="none">
-                  <circle cx="10" cy="10" r="4" stroke="currentColor" strokeWidth="1.4" />
-                  <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 20 20" width="15" height="15" fill="none">
-                  <path d="M17 11.5A7 7 0 1 1 8.5 3a5.5 5.5 0 0 0 8.5 8.5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-                </svg>
+          <div className="side-section">
+            <div className="side-label">Recent enquiries</div>
+            <ul className="hist">
+              {threads.length === 0 && (
+                <li className="hist-empty">No past enquiries yet</li>
               )}
+              {threads.map(t => (
+                <li
+                  key={t.thread_id}
+                  className={`hist-item${selectedThread?.thread_id === t.thread_id ? ' active' : ''}`}
+                  onClick={() => openThread(t)}
+                >
+                  <span className="hist-title">{t.title}</span>
+                  <span className="hist-time">{formatDate(t.updated_at)}</span>
+                  <button
+                    className="hist-delete"
+                    onClick={(e) => deleteThread(e, t)}
+                    title="Delete enquiry"
+                    aria-label={`Delete enquiry "${t.title}"`}
+                  >
+                    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+                      <path d="M2 4h12M6 4V2.5h4V4M13 4l-.75 9.5H3.75L3 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M6.5 7.5v4M9.5 7.5v4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                    </svg>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="side-foot">
+            <MarketStatus />
+            <div className="user-row">
+              <button className="user-row-main" onClick={() => setView('settings')}>
+                <div className="avatar">
+                  {avatarUrl
+                    ? <img src={avatarUrl} alt="" className="avatar-img" />
+                    : initials
+                  }
+                </div>
+                <div className="user-row-text">
+                  <div className="user-name">{displayName || user.email}</div>
+                  <div className="user-plan">Account &amp; settings</div>
+                </div>
+              </button>
+              <button className="logout-small" onClick={handleLogout} title="Sign out" aria-label="Sign out">↩</button>
+            </div>
+            <p className="side-legal">
+              For information only, not investment advice.{' '}
+              <a href="/terms" target="_blank" rel="noopener">Terms</a>
+              {' · '}
+              <a href="/privacy" target="_blank" rel="noopener">Privacy</a>
+            </p>
+          </div>
+        </aside>
+
+        {/* MAIN */}
+        <main className="main">
+          <header className="topbar">
+            <button
+              className="icon-btn"
+              onClick={() => setSidebarOpen(s => !s)}
+              aria-label="Toggle sidebar"
+            >
+              <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              </svg>
             </button>
-          </div>
-        </header>
 
-        {view === 'settings' ? (
-          <SettingsPage
-            user={user}
-            displayName={displayName}
-            avatarUrl={avatarUrl}
-            onSave={handleProfileSave}
-          />
-        ) : selectedThread ? (
-          <div className="c1chat-wrap">
-            <ContinuationChat key={selectedThread.thread_id} thread={selectedThread} />
-          </div>
-        ) : (
-          <div className="c1chat-wrap">
-            <C1Chat key={chatKey} processMessage={chatProcessMessage} />
-          </div>
+            <div className="thread-title">
+              <span className="thread-eyebrow">{topbarEyebrow}</span>
+              <h1>{topbarTitle}</h1>
+            </div>
+
+            <div className="top-actions">
+              {view === 'settings' ? (
+                <button className="rbtn rbtn-ghost" onClick={() => setView('chat')}>
+                  ← Back
+                </button>
+              ) : selectedThread ? (
+                <button className="rbtn rbtn-ghost" onClick={closeThread}>
+                  ← New enquiry
+                </button>
+              ) : null}
+              <button className="theme-toggle" onClick={toggleTheme} aria-label="Toggle theme" title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+                {theme === 'dark' ? (
+                  <svg viewBox="0 0 20 20" width="15" height="15" fill="none" aria-hidden="true">
+                    <circle cx="10" cy="10" r="4" stroke="currentColor" strokeWidth="1.4" />
+                    <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 20 20" width="15" height="15" fill="none" aria-hidden="true">
+                    <path d="M17 11.5A7 7 0 1 1 8.5 3a5.5 5.5 0 0 0 8.5 8.5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </button>
+            </div>
+          </header>
+
+          {view === 'settings' ? (
+            <SettingsPage
+              user={user}
+              displayName={displayName}
+              avatarUrl={avatarUrl}
+              onSave={handleProfileSave}
+            />
+          ) : selectedThread ? (
+            <div className="c1chat-wrap">
+              <ContinuationChat key={selectedThread.thread_id} thread={selectedThread} />
+            </div>
+          ) : (
+            <div className="c1chat-wrap">
+              <C1Chat key={chatKey} processMessage={chatProcessMessage} />
+            </div>
+          )}
+        </main>
+
+        {sidebarOpen && (
+          <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
         )}
-      </main>
 
-      {sidebarOpen && (
-        <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
-      )}
-
-      {pendingDelete && (
-        <DeleteModal
-          title={pendingDelete.title}
-          onConfirm={confirmDelete}
-          onCancel={() => setPendingDelete(null)}
-        />
-      )}
-    </div>
+        {pendingDelete && (
+          <DeleteModal
+            title={pendingDelete.title}
+            onConfirm={confirmDelete}
+            onCancel={() => setPendingDelete(null)}
+          />
+        )}
+      </div>
+    </ThemeProvider>
   )
 }

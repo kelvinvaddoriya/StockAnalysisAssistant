@@ -1,5 +1,9 @@
 import { useState, useEffect, lazy, Suspense } from 'react'
-import { ThemeProvider } from '@thesysai/genui-sdk'
+import { Analytics } from '@vercel/analytics/react'
+// Crayon's stylesheet stays here, ahead of App.css, so the overrides in App.css
+// keep winning the cascade. The SDK's JS (ThemeProvider, C1Chat) is only
+// imported from ChatPage — pulling it in here put the whole SDK, ~3 MB, into
+// the bundle every visitor downloads just to see the login form.
 import '@crayonai/react-ui/styles/index.css'
 import './App.css'
 import LoginPage from './LoginPage'
@@ -27,30 +31,28 @@ function App() {
 
   if (checking) {
     return (
-      <ThemeProvider mode='dark'>
-        <div className='loading-screen'>
-          <div className='loading-brand'>
-            <svg viewBox="0 0 32 32" width="28" height="28">
-              <circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" strokeWidth="1" />
-              <path d="M9 22 L 9 10 L 16 18 L 23 10 L 23 22" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <div>
-              <div className='loading-brand-word'>Bourse</div>
-              <div className='loading-sub'>Preparing your briefing…</div>
-            </div>
+      <div className='loading-screen'>
+        <div className='loading-brand'>
+          <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">
+            <circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" strokeWidth="1" />
+            <path d="M9 22 L 9 10 L 16 18 L 23 10 L 23 22" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <div>
+            <div className='loading-brand-word'>Bourse</div>
+            <div className='loading-sub'>Preparing your briefing…</div>
           </div>
         </div>
-      </ThemeProvider>
+      </div>
     )
   }
 
   return (
-    <ThemeProvider mode='dark'>
+    <>
       {user ? (
         <Suspense fallback={
           <div className='loading-screen'>
             <div className='loading-brand'>
-              <svg viewBox="0 0 32 32" width="28" height="28">
+              <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">
                 <circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" strokeWidth="1" />
                 <path d="M9 22 L 9 10 L 16 18 L 23 10 L 23 22" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -69,7 +71,8 @@ function App() {
       ) : (
         <LoginPage />
       )}
-    </ThemeProvider>
+      <Analytics />
+    </>
   )
 }
 

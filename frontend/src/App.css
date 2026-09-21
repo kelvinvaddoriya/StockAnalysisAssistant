@@ -11,19 +11,23 @@
 
   --ink-0: #f5f5f5;
   --ink-1: #999999;
-  --ink-2: #555555;
-  --ink-3: #333333;
+  --ink-2: #858585;   /* ≥4.5:1 on bg-0…bg-2 (WCAG AA). Was #555, 2.6:1 */
+  --ink-3: #333333;   /* rules and borders only, never text */
 
   --rule:        1px solid #1e1e1e;
   --rule-strong: 1px solid #2e2e2e;
 
-  --accent:      #e8333a;   /* Swiss red */
-  --accent-dark: #b52228;
+  /* Three reds, because one red can't pass both jobs: white text on red needs
+     a darker red, and red text on near-black needs a lighter one. */
+  --accent:      #e8333a;   /* Swiss red: brand marks, borders, focus rings */
+  --accent-fill: #d42a31;   /* backgrounds behind white text: 5.0:1 */
+  --accent-dark: #b01d23;   /* hover state of accent-fill */
+  --accent-text: #f5474e;   /* red text on dark surfaces: ≥4.8:1 */
   --up:          #00c97a;
-  --down:        #e8333a;
+  --down:        var(--accent-text);
 
-  --font: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
-  --font-tight: 'Inter Tight', 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font: 'Inter Variable', 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-tight: 'Inter Tight Variable', 'Inter Tight', 'Inter Variable', 'Helvetica Neue', Helvetica, Arial, sans-serif;
 
   --font-display: var(--font);
   --font-body:    var(--font);
@@ -44,8 +48,13 @@
 
   --ink-0: #111111;
   --ink-1: #444444;
-  --ink-2: #888888;
+  --ink-2: #666666;   /* was #888, 3.5:1 */
   --ink-3: #cccccc;
+
+  --accent:      #c8252c;
+  --accent-fill: #c8252c;
+  --accent-text: #c8252c;   /* 5.1:1 on #f5f5f5 */
+  --up:          #007a52;   /* #00c97a is 2.2:1 on white */
 
   --rule:        1px solid #e4e4e4;
   --rule-strong: 1px solid #d0d0d0;
@@ -136,7 +145,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   gap: 8px;
   width: 100%;
   padding: 12px 18px;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
   font-size: 12px;
   font-weight: 700;
@@ -237,7 +246,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .ms-dot {
   width: 6px; height: 6px;
   border-radius: 50%;
-  background: var(--down);
+  background: var(--accent);
   flex-shrink: 0;
 }
 .ms-dot.open { background: var(--up); }
@@ -268,7 +277,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   width: 28px; height: 28px;
   display: grid;
   place-items: center;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
   font-size: 11px;
   font-weight: 800;
@@ -415,7 +424,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .chat-avatar {
   width: 26px; height: 26px;
   flex-shrink: 0;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
   font-size: 11px;
   font-weight: 800;
@@ -439,7 +448,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 }
 
 .chat-bubble-user {
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
   padding: 10px 16px;
   font-weight: 500;
@@ -590,7 +599,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   --crayon-chat-container-bg:   #0b0b0b !important;
   --crayon-chat-assistant-response-bg:   #161616 !important;
   --crayon-chat-assistant-response-text: #e0e0e0 !important;
-  --crayon-chat-user-response-bg:  #e8333a !important;
+  --crayon-chat-user-response-bg:  #d42a31 !important;
   --crayon-chat-user-response-text: #ffffff !important;
   --crayon-primary-text:        #f5f5f5 !important;
   --crayon-secondary-text:      #999999 !important;
@@ -622,15 +631,15 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   --crayon-chat-container-bg:             #f5f5f5 !important;
   --crayon-chat-assistant-response-bg:    #ffffff !important;
   --crayon-chat-assistant-response-text:  #111111 !important;
-  --crayon-chat-user-response-bg:         #e8333a !important;
+  --crayon-chat-user-response-bg:         #c8252c !important;
   --crayon-chat-user-response-text:       #ffffff !important;
   --crayon-primary-text:                  #111111 !important;
-  --crayon-secondary-text:                #555555 !important;
+  --crayon-secondary-text:                #595959 !important;
   --crayon-disabled-text:                 #aaaaaa !important;
   --crayon-stroke-default:                #e0e0e0 !important;
   --crayon-stroke-interactive-el:         #d0d0d0 !important;
   --crayon-interactive-hover:             rgba(0,0,0,0.04) !important;
-  --crayon-interactive-accent:            #e8333a !important;
+  --crayon-interactive-accent:            #c8252c !important;
   --crayon-highlight-subtle:              rgba(0,0,0,0.02) !important;
   --crayon-highlight-strong:              rgba(0,0,0,0.06) !important;
 }
@@ -810,7 +819,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 }
 
 .auth-btn {
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
   border: none;
   padding: 12px;
@@ -825,6 +834,74 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 }
 .auth-btn:hover:not(:disabled) { background: var(--accent-dark); }
 .auth-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.auth-headline {
+  font-family: var(--font-tight);
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--ink-0);
+  margin: 0 0 8px;
+}
+.auth-pitch {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-1);
+  margin: 0 0 24px;
+}
+.auth-captcha { min-height: 65px; }
+.auth-switch {
+  margin: 18px 0 0;
+  font-size: 13px;
+  color: var(--ink-1);
+  text-align: center;
+}
+.auth-link {
+  color: var(--ink-0);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--accent);
+}
+.auth-link:hover { color: var(--accent-text); }
+.auth-legal {
+  margin: 20px 0 0;
+  padding-top: 16px;
+  border-top: var(--rule);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  text-align: center;
+}
+.auth-legal a, .side-legal a { color: var(--ink-1); }
+.auth-legal a:hover, .side-legal a:hover { color: var(--ink-0); }
+
+.side-legal {
+  margin: 0;
+  padding: 10px 18px 14px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.settings-error {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--down);
+  margin: 0 0 12px;
+}
+
+/* visually hidden, still read by screen readers */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 /* ========== settings page ========== */
 
@@ -874,7 +951,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .settings-avatar-wrap { position: relative; flex-shrink: 0; }
 .settings-avatar-btn {
   width: 64px; height: 64px;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
   font-size: 20px;
   font-weight: 800;
@@ -969,7 +1046,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .settings-save {
   align-self: flex-start;
   margin-top: 8px;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
   border: none;
   padding: 10px 22px;
@@ -1002,7 +1079,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   font-size: 11px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: var(--accent);
+  color: var(--accent-text);
   letter-spacing: 0.06em;
   flex-shrink: 0;
   padding-top: 2px;
@@ -1100,9 +1177,9 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .del-btn-cancel:hover { color: var(--ink-0); border-color: var(--ink-2); }
 
 .del-btn-confirm {
-  background: var(--down);
+  background: var(--accent-fill);
   color: #fff;
-  border: 1px solid var(--down);
+  border: 1px solid var(--accent-fill);
 }
 .del-btn-confirm:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
 
