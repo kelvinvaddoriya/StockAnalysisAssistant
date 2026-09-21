@@ -8,6 +8,36 @@ interface Props {
   onSave: (displayName: string, avatarUrl: string) => void
 }
 
+const AVATAR_PX = 256              // rendered at 32–64px; 256 covers 4x displays
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+const ACCEPTED = ['image/jpeg', 'image/png', 'image/webp']
+
+/** Downscale and re-encode an uploaded photo to a small square JPEG data URL.
+ *  The avatar lives in localStorage (about a 5 MB quota per origin). A raw phone
+ *  photo is 3–8 MB as a data URL, so storing it as-is made setItem throw. */
+function compressAvatar(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      // centre-crop to a square, then scale down
+      const side = Math.min(img.naturalWidth, img.naturalHeight)
+      const sx = (img.naturalWidth - side) / 2
+      const sy = (img.naturalHeight - side) / 2
+      const out = Math.min(AVATAR_PX, side)
+      const canvas = document.createElement('canvas')
+      canvas.width = canvas.height = out
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return reject(new Error('Canvas unavailable'))
+      ctx.drawImage(img, sx, sy, side, side, 0, 0, out, out)
+      resolve(canvas.toDataURL('image/jpeg', 0.85))
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Unreadable image')) }
+    img.src = url
+  })
+}
+
 function getInitials(name: string, email: string) {
   if (name.trim()) {
     return name.trim().split(/\s+/).map(p => p[0]?.toUpperCase() ?? '').slice(0, 2).join('')
@@ -20,15 +50,27 @@ export default function SettingsPage({ user, displayName: initialName, avatarUrl
   const [avatar, setAvatar] = useState(initialAvatar)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [error, setError] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = ev => setAvatar(ev.target?.result as string)
-    reader.readAsDataURL(file)
     e.target.value = ''
+    if (!file) return
+    setError('')
+    if (!ACCEPTED.includes(file.type)) {
+      setError('Please choose a JPG, PNG or WebP image.')
+      return
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError('That image is over 10 MB. Please choose a smaller one.')
+      return
+    }
+    try {
+      setAvatar(await compressAvatar(file))
+    } catch {
+      setError("Couldn't read that image. Try a different file.")
+    }
   }
 
   function removeAvatar() {
@@ -37,11 +79,21 @@ export default function SettingsPage({ user, displayName: initialName, avatarUrl
 
   async function handleSave() {
     setSaving(true)
-    await supabase.auth.updateUser({ data: { display_name: name.trim() } })
-    if (avatar) {
-      localStorage.setItem(`bourse-avatar-${user.id}`, avatar)
-    } else {
-      localStorage.removeItem(`bourse-avatar-${user.id}`)
+    setError('')
+    const { error: updateError } = await supabase.auth.updateUser({ data: { display_name: name.trim() } })
+    if (updateError) {
+      setError(`Couldn't save your name: ${updateError.message}`)
+      setSaving(false)
+      return
+    }
+    try {
+      if (avatar) {
+        localStorage.setItem(`bourse-avatar-${user.id}`, avatar)
+      } else {
+        localStorage.removeItem(`bourse-avatar-${user.id}`)
+      }
+    } catch {
+      setError("Your name was saved, but the photo couldn't be stored in this browser.")
     }
     onSave(name.trim(), avatar)
     setSaving(false)
@@ -61,19 +113,19 @@ export default function SettingsPage({ user, displayName: initialName, avatarUrl
 
           <div className="settings-avatar-row">
             <div className="settings-avatar-wrap">
-              <button className="settings-avatar-btn" onClick={() => fileRef.current?.click()} title="Upload photo">
+              <button className="settings-avatar-btn" onClick={() => fileRef.current?.click()} title="Upload photo" aria-label="Upload profile photo">
                 {avatar
-                  ? <img src={avatar} alt="Profile" className="settings-avatar-img" />
+                  ? <img src={avatar} alt="Your profile photo" className="settings-avatar-img" />
                   : <span className="settings-avatar-initials">{initials}</span>
                 }
                 <div className="settings-avatar-overlay">
-                  <svg viewBox="0 0 20 20" width="15" height="15" fill="none">
+                  <svg viewBox="0 0 20 20" width="15" height="15" fill="none" aria-hidden="true">
                     <path d="M13 3H7L5 6H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1h-2L13 3z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
                     <circle cx="10" cy="11" r="2.5" stroke="currentColor" strokeWidth="1.3"/>
                   </svg>
                 </div>
               </button>
-              <input ref={fileRef} type="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} />
+              <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleFileChange} style={{ display: 'none' }} />
             </div>
             <div className="settings-avatar-meta">
               <div className="settings-avatar-name">{name || user.email}</div>
@@ -85,8 +137,9 @@ export default function SettingsPage({ user, displayName: initialName, avatarUrl
           </div>
 
           <div className="settings-field">
-            <label className="settings-label">Display name</label>
+            <label className="settings-label" htmlFor="settings-name">Display name</label>
             <input
+              id="settings-name"
               className="settings-input"
               value={name}
               onChange={e => setName(e.target.value)}
@@ -97,9 +150,11 @@ export default function SettingsPage({ user, displayName: initialName, avatarUrl
           </div>
 
           <div className="settings-field">
-            <label className="settings-label">Email</label>
-            <input className="settings-input settings-input-readonly" value={user.email} readOnly />
+            <label className="settings-label" htmlFor="settings-email">Email</label>
+            <input id="settings-email" className="settings-input settings-input-readonly" value={user.email} readOnly />
           </div>
+
+          {error && <p className="settings-error" role="alert">{error}</p>}
 
           <button
             className={`settings-save${saved ? ' saved' : ''}`}
