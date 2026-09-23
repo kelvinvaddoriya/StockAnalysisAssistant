@@ -28,3 +28,14 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS         # comma-separated, e.g. https://bourse.vercel.app
         sync: false
+      # Observability. langchain-core already ships the langsmith client, so
+      # setting these three turns on full desk traces with no code change —
+      # which specialist was slow, what the supervisor routed, token spend.
+      # Leave LANGSMITH_TRACING unset to keep it off. Note traces carry the
+      # user's question text off to LangSmith.
+      - key: LANGSMITH_TRACING       # "true" to enable; unset = off
+        sync: false
+      - key: LANGSMITH_API_KEY
+        sync: false
+      - key: LANGSMITH_PROJECT       # e.g. bourse-prod
+        sync: false

@@ -66,15 +66,16 @@ StockAnalysisAssistant/
 │   │   ├── prompts.py       # System prompts
 │   │   ├── models.py        # Two-tier model clients / API keys
 │   │   └── state.py         # DeskState TypedDict
-│   ├── tests/               # pytest (34 tests, desk + DB mocked)
+│   ├── tests/               # pytest (42 tests, desk + DB mocked)
 │   ├── requirements.txt     # Also pyproject.toml + uv.lock (uv is the prod path)
 │   └── pytest.ini
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx          # Auth routing (login vs chat)
-│   │   ├── ChatPage.tsx     # Sidebar, theme, C1Chat, processMessage
+│   │   ├── ChatPage.tsx     # Sidebar, theme, C1Chat
 │   │   ├── LoginPage.tsx    # Login / register
 │   │   ├── SettingsPage.tsx # Profile (display name, avatar)
+│   │   ├── chatApi.ts       # processMessage for C1Chat → POST /api/chat
 │   │   ├── supabase.ts      # Supabase client + authedFetch
 │   │   ├── utils.ts
 │   │   └── __tests__/       # vitest
@@ -188,7 +189,7 @@ All `/api/chat*` endpoints require `Authorization: Bearer <supabase access_token
 ## Tests
 
 ```bash
-cd backend && pytest           # 34 tests — desk graph and DB are mocked
+cd backend && pytest           # 42 tests — desk graph and DB are mocked
 cd frontend && npm run test    # vitest
 ```
 
@@ -215,6 +216,6 @@ Push to `main` — Render and Vercel both auto-deploy from their own Git integra
 | Frontend | Vercel (Hobby, root dir `frontend/`) | Vercel dashboard |
 | Auth + DB | Supabase | `supabase/migrations/` |
 
-GitHub Actions ([`python-app.yml`](.github/workflows/python-app.yml)) runs flake8 on `backend/` for every push and PR to `main`. It has no deploy rights.
+GitHub Actions ([`python-app.yml`](.github/workflows/python-app.yml)) runs flake8 + pytest on `backend/` and vitest on `frontend/` for every push and PR to `main`. It has no deploy rights. The frontend build is not duplicated there — Vercel builds every push and is the gate for that.
 
-Two things worth knowing before you touch deployment: the free Render tier spins down after ~15 minutes idle, so the first request after a lull pays a 30–60s cold start; and Vercel preview deployments get unique URLs that aren't in the backend's `ALLOWED_ORIGINS`, so they'll fail CORS. See [`docs/ARCHITECTURE.md` §6–§7](docs/ARCHITECTURE.md).
+Two things worth knowing before you touch deployment: the free Render tier spins down after ~15 minutes idle, so the first request after a lull pays a 30–60s cold start — [`keep-warm.yml`](.github/workflows/keep-warm.yml) pings `/api/health` every 10 minutes to hold that off, which uses most of the 750 free instance-hours a month; and Vercel preview deployments get unique URLs that aren't in the backend's `ALLOWED_ORIGINS`, so they'll fail CORS. See [`docs/ARCHITECTURE.md` §6–§7](docs/ARCHITECTURE.md).

@@ -2045,6 +2045,7 @@ name = "stockanalysisassistant"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "cachetools" },
     { name = "fastapi" },
     { name = "langchain", extra = ["openai"] },
     { name = "langgraph" },
@@ -2066,6 +2067,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cachetools", specifier = ">=6.0" },
     { name = "fastapi", specifier = ">=0.124.4" },
     { name = "langchain", extras = ["openai"], specifier = ">=1.2.0" },
     { name = "langgraph", specifier = ">=1.0.5" },

@@ -6,9 +6,18 @@ too, so the legacy single-agent path and the new desk use identical tools.
 
 Contract: never raise on user input. On missing data, return a human-readable
 "no data" string so the calling agent can recover (e.g. retry with a suffix).
+
+Every call is TTL-cached. Up to three specialists fan out in parallel per
+question and routinely ask for the same ticker, so without this Yahoo gets hit
+2-3x for one answer — slower, and a good way to get throttled. TTLs are set by
+how fast the data actually moves: quotes seconds, filings quarterly.
 """
 import yfinance as yf
+from cachetools.func import ttl_cache
 from langchain_core.tools import tool
+
+_MINUTE = 60
+_HOUR = 3600
 
 _TICKER_HELP = (
     'Use the Yahoo Finance ticker convention: US-listed stocks use the plain '
@@ -23,6 +32,7 @@ _TICKER_HELP = (
 
 @tool('get_stock_price',
       description='Returns the current closing price for a ticker symbol. ' + _TICKER_HELP)
+@ttl_cache(maxsize=256, ttl=_MINUTE)
 def get_stock_price(ticker: str):
     hist = yf.Ticker(ticker).history()
     if hist.empty:
@@ -32,6 +42,7 @@ def get_stock_price(ticker: str):
 
 @tool('get_historical_stock_price',
       description='Returns the closing price history between two ISO dates (YYYY-MM-DD). ' + _TICKER_HELP)
+@ttl_cache(maxsize=256, ttl=_HOUR)
 def get_historical_stock_price(ticker: str, start_date: str, end_date: str):
     hist = yf.Ticker(ticker).history(start=start_date, end=end_date)
     if hist.empty:
@@ -41,6 +52,7 @@ def get_historical_stock_price(ticker: str, start_date: str, end_date: str):
 
 @tool('get_balance_sheet',
       description='Returns the latest balance sheet for a ticker symbol. ' + _TICKER_HELP)
+@ttl_cache(maxsize=256, ttl=24 * _HOUR)
 def get_balance_sheet(ticker: str):
     bs = yf.Ticker(ticker).balance_sheet
     if bs.empty:
@@ -50,6 +62,7 @@ def get_balance_sheet(ticker: str):
 
 @tool('get_stock_news',
       description='Returns recent news articles for a ticker symbol. ' + _TICKER_HELP)
+@ttl_cache(maxsize=256, ttl=15 * _MINUTE)
 def get_stock_news(ticker: str):
     news = yf.Ticker(ticker).news
     if not news:

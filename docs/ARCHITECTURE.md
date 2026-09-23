@@ -51,7 +51,7 @@ The browser also talks **directly** to Supabase for login/signup (using the publ
 | Market data tools | `yfinance` | `backend/agents/tools.py` |
 | Auth + DB | Supabase | external (`bfggkbsjnxyptrfotrjc`) |
 | CI/CD | Render + Vercel Git integration (auto-deploy on push to `main`) | `render.yaml` / Vercel dashboard |
-| Lint CI | GitHub Actions (flake8) | `.github/workflows/python-app.yml` |
+| CI | GitHub Actions (flake8 + pytest, vitest) | `.github/workflows/python-app.yml` |
 
 ---
 
@@ -224,8 +224,13 @@ git push origin main
       │                                    build:  npm ci && npm run build
       │                                    output: dist/  (VITE_* env from dashboard)
       │
-      └── changed under backend/**   ──► .github/workflows/python-app.yml
-                                           flake8 lint (no deploy rights)
+      └── any push / PR to main      ──► .github/workflows/python-app.yml
+                                           backend:  flake8 + pytest
+                                           frontend: vitest
+                                           (no deploy rights)
+
+every 10 min  ──► .github/workflows/keep-warm.yml
+                    curl /api/health — stops the free instance sleeping
 ```
 
 Both platforms watch the repo through their own Git integration, so `main` is the only deploy trigger and GitHub Actions holds no cloud credentials at all.
@@ -267,6 +272,8 @@ npm run dev                    # :3000, proxies /api/* to :8888
 | `DATABASE_URL` | backend | prod only | Supabase Postgres URI backing the checkpointer. Unset → in-memory, wiped on restart |
 | `ALLOWED_ORIGINS` | backend | prod only | Comma-separated origins appended to the CORS allowlist. Unset locally — `localhost:3000` is always allowed |
 | `CHAT_LIMIT_PER_10_MIN` / `CHAT_LIMIT_PER_DAY` | backend | no | Per-user caps on `/api/chat` (defaults 20 and 150). In-process counters: correct for one instance, reset on restart |
+| `LANGSMITH_TRACING` | backend | no | `true` turns on LangSmith tracing of the whole desk. Off unless set. Needs `LANGSMITH_API_KEY` too — set alone it just logs warnings |
+| `LANGSMITH_API_KEY` / `LANGSMITH_PROJECT` | backend | no | LangSmith credentials and project name. No code change needed: `langchain-core` already ships the client |
 | `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` | frontend build | yes | Public `anon` key; baked into the bundle |
 | `VITE_API_BASE` | frontend build | prod only | Backend origin, e.g. `https://bourse-backend.onrender.com`. **Leave unset in dev** so the Vite proxy handles `/api` |
 | `VITE_TURNSTILE_SITE_KEY` | frontend build | no | Enables the Cloudflare Turnstile check on sign-in/sign-up. Set it **only after** enabling CAPTCHA in Supabase → Auth → Attack Protection. Supabase CAPTCHA on without this var breaks all logins |
@@ -277,7 +284,7 @@ Tests:
 
 ```bash
 cd backend
-pytest                         # 34 tests, mocks the desk + DB
+pytest                         # 42 tests, mocks the desk + DB
 ```
 
 Frontend tests:
