@@ -116,6 +116,12 @@ if _db_url:
     )
     checkpointer = PostgresSaver(_pool)
     checkpointer.setup()          # idempotent — creates the checkpoint tables
+    # setup() creates them in `public` with RLS off, exposing them to the Data API.
+    # RLS with no policies denies anon/authenticated; we connect as the owner, so
+    # we bypass it. Idempotent, so it's safe on every boot.
+    with _pool.connection() as _conn:
+        for _t in ('checkpoint_migrations', 'checkpoints', 'checkpoint_blobs', 'checkpoint_writes'):
+            _conn.execute(f'ALTER TABLE IF EXISTS public.{_t} ENABLE ROW LEVEL SECURITY')
     log.info('Checkpointer: Postgres')
 
     # Render sends SIGTERM on every spin-down and redeploy; uvicorn exits cleanly
